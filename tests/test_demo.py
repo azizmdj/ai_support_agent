@@ -16,7 +16,7 @@ def test_fixture_tickets_take_the_expected_paths(make_env, fixture_tickets):
         "T07": ("complaint", E),  # no rule; model says complaint, locked class escalates
         "T08": ("card_blocked", D),
         "T09": ("card_blocked", N),  # missing card_last4
-        "T10": ("card_blocked", N),  # no German card template
+        "T10": ("card_blocked", D),  # German card template
         "T11": ("pending_transfer", D),
         "T12": ("unclear", N),  # vague
         "T13": ("unclear", N),  # two issues -> low confidence

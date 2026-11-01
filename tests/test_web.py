@@ -93,8 +93,8 @@ def test_page_renders_lanes_and_header(console):
     for title in ("Urgent", "Ready to approve", "Needs a person"):
         assert title in html
     assert "Urgent <span class=\"count\">(5)</span>" in html
-    assert "Ready to approve <span class=\"count\">(6)</span>" in html
-    assert "Needs a person <span class=\"count\">(4)</span>" in html
+    assert "Ready to approve <span class=\"count\">(7)</span>" in html
+    assert "Needs a person <span class=\"count\">(3)</span>" in html
     # Default selection is the most urgent case: fraud has the shortest deadline.
     assert 'aria-current="true"' in html
     assert "https://" not in html and "<script" not in html  # no CDN, no JavaScript

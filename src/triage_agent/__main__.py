@@ -64,6 +64,12 @@ def main(argv: list[str] | None = None) -> int:
     p_cls = sub.add_parser("classify", help="mask one message and classify it with the active provider chain")
     p_cls.add_argument("text")
     p_cls.add_argument("--pack", type=Path, default=DEFAULT_PACK)
+    p_eval = sub.add_parser("eval", help="run the evaluation set and write a Markdown report")
+    p_eval.add_argument("--split", choices=["dev", "test", "all"], default="dev")
+    p_eval.add_argument("--provider", help="comma-separated provider ids (default: the active routing)")
+    p_eval.add_argument("--pack", type=Path, default=DEFAULT_PACK)
+    p_eval.add_argument("--out", type=Path, default=None, help="report folder (default eval/results)")
+    p_eval.add_argument("--write-baseline", action="store_true", help="update eval/baseline.json from the fake run")
     p_serve = sub.add_parser("serve", help="run the reviewer console on http://127.0.0.1:8000")
     p_serve.add_argument("--pack", type=Path, default=DEFAULT_PACK)
     p_serve.add_argument("--port", type=int, default=8000)
@@ -71,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "classify":
             return classify(args.pack, args.text)
+        if args.command == "eval":
+            return run_eval_command(args.pack, args.split, args.provider, args.out, args.write_baseline)
         if args.command == "serve":
             return serve(args.pack, args.port)
         return demo(args.pack, args.tickets)
@@ -92,6 +100,21 @@ def classify(pack: Path, text: str) -> int:
         print(f"provider error: {exc}", file=sys.stderr)
         return 1
     print(f"result: {result.model_dump_json()}")
+    return 0
+
+
+def run_eval_command(pack: Path, split: str, provider: str | None, out: Path | None, write_baseline: bool) -> int:
+    from . import evaluation
+
+    config = load_config(pack)
+    if write_baseline:
+        evaluation.write_baseline(config)
+        print(f"baseline written to {evaluation.BASELINE_PATH}")
+    run = evaluation.evaluate(config, split, provider_ids=provider)
+    print(evaluation.summary_table(run))
+    path = evaluation.write_report(run, out or evaluation.RESULTS_DIR)
+    print()
+    print(f"report: {path}")
     return 0
 
 

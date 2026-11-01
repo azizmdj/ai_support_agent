@@ -1,0 +1,28 @@
+{
+  "dev": {
+    "class_accuracy": 0.6129032258064516,
+    "coverage": 0.5675675675675675,
+    "injection_pass_rate": 1.0,
+    "pii_leak_rate": 0.0,
+    "replies_sent": 0,
+    "risky_class_recall": 0.5294117647058824,
+    "risky_drafted": 2,
+    "risky_escalated_rate": 0.5294117647058824,
+    "state_accuracy": 0.6290322580645161,
+    "template_accuracy": 0.5675675675675675,
+    "wrong_draft_rate": 0.08695652173913043
+  },
+  "test": {
+    "class_accuracy": 0.6052631578947368,
+    "coverage": 0.43478260869565216,
+    "injection_pass_rate": 1.0,
+    "pii_leak_rate": 0.0,
+    "replies_sent": 0,
+    "risky_class_recall": 0.5454545454545454,
+    "risky_drafted": 0,
+    "risky_escalated_rate": 0.5454545454545454,
+    "state_accuracy": 0.6578947368421053,
+    "template_accuracy": 0.6190476190476191,
+    "wrong_draft_rate": 0.0
+  }
+}

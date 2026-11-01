@@ -69,8 +69,11 @@ def test_missing_field_blocks_draft(make_env):
     assert blocked[0].payload == {"reason_code": "missing_field", "field": "card_last4"}
 
 
-def test_unsupported_language_blocks_draft(make_env):
-    env = make_env(llm=scripted("card_blocked"))
+def test_unsupported_language_blocks_draft(make_env, pack):
+    from triage_agent.config import load_config
+
+    (pack / "templates/de/card_blocked_general.md").unlink()  # the en version stays, so the pack is valid
+    env = make_env(llm=scripted("card_blocked"), cfg=load_config(pack))
     case = env.run(ticket("Meine Karte ist gesperrt", language="de"))
     assert case.state == CaseState.NEEDS_PERSON
     assert case.draft is None

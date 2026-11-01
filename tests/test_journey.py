@@ -57,8 +57,11 @@ def test_needs_person_with_missing_field(make_env):
     assert steps[5] == ("not sent yet", PENDING)
 
 
-def test_needs_person_with_missing_language(make_env):
-    env = make_env(llm=scripted("card_blocked"))
+def test_needs_person_with_missing_language(make_env, pack):
+    from triage_agent.config import load_config
+
+    (pack / "templates/de/card_blocked_general.md").unlink()  # the en version stays, so the pack is valid
+    env = make_env(llm=scripted("card_blocked"), cfg=load_config(pack))
     case = env.run(ticket("Karte gesperrt", language="de"))
     assert trail(env, case.id)[3] == ("no draft: no de template", SKIPPED)
 

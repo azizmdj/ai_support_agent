@@ -65,7 +65,8 @@ def test_unknown_template_id_is_rejected(pack):
 
 
 def test_missing_template_file_is_rejected(pack):
-    (pack / "templates/en/card_blocked_pin.md").unlink()
+    for lang in ("en", "de"):
+        (pack / f"templates/{lang}/card_blocked_pin.md").unlink()
     assert_rejected(pack, "missing template file for 'card_blocked_pin'")
 
 
