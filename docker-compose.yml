@@ -1,0 +1,22 @@
+# One service: the reviewer console. Offline by default (TRIAGE_PROVIDER=fake).
+# Keys are passed through from your shell by name only; no value is stored in this file.
+services:
+  console:
+    build: .
+    image: triage-agent:local
+    ports:
+      - "127.0.0.1:8000:8000"   # reachable from this machine only
+    environment:
+      - TRIAGE_DB=/data/triage.db
+      - TRIAGE_PROVIDER=${TRIAGE_PROVIDER:-fake}
+      - TRIAGE_REVIEWER=${TRIAGE_REVIEWER:-demo-reviewer}
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+    volumes:
+      - triage-data:/data
+      # Uncomment to edit classes, rules and templates on the host without rebuilding.
+      # The config is read at startup, so run `docker compose restart` after an edit.
+      # - ./pack:/app/pack:ro
+
+volumes:
+  triage-data:

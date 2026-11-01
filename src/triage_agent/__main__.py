@@ -8,14 +8,13 @@ from pathlib import Path
 
 from . import DEFAULT_PACK, DEFAULT_TICKETS
 from .audit import AuditLog
-from .config import load_config
+from .config import UNCLEAR, ConfigError, load_config
 from .gate import Gate
-from .config import UNCLEAR, ConfigError
 from .masking import mask
-from .providers import ProviderError
-from .providers.registry import build_llm
 from .models import CaseState
 from .pipeline import Pipeline
+from .providers import ProviderError
+from .providers.registry import build_llm
 from .store import SQLiteCaseStore, connect
 from .ticket_source import MockTicketSource, load_tickets
 
@@ -72,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     p_eval.add_argument("--write-baseline", action="store_true", help="update eval/baseline.json from the fake run")
     p_serve = sub.add_parser("serve", help="run the reviewer console on http://127.0.0.1:8000")
     p_serve.add_argument("--pack", type=Path, default=DEFAULT_PACK)
+    p_serve.add_argument("--host", default="127.0.0.1", help="use 0.0.0.0 inside a container")
     p_serve.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
     try:
@@ -80,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "eval":
             return run_eval_command(args.pack, args.split, args.provider, args.out, args.write_baseline)
         if args.command == "serve":
-            return serve(args.pack, args.port)
+            return serve(args.pack, args.host, args.port)
         return demo(args.pack, args.tickets)
     except ConfigError as exc:  # names a missing variable, never a value
         print(exc, file=sys.stderr)
@@ -118,13 +118,13 @@ def run_eval_command(pack: Path, split: str, provider: str | None, out: Path | N
     return 0
 
 
-def serve(pack: Path, port: int) -> int:
+def serve(pack: Path, host: str, port: int) -> int:
     import uvicorn
 
     from .web.app import create_app
 
     # DB path from TRIAGE_DB (default in-memory), reviewer id from TRIAGE_REVIEWER.
-    uvicorn.run(create_app(pack=pack), host="127.0.0.1", port=port)
+    uvicorn.run(create_app(pack=pack), host=host, port=port)
     return 0
 
 

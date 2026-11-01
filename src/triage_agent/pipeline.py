@@ -11,9 +11,9 @@ from pydantic import ValidationError
 from .audit import AuditLog
 from .config import UNCLEAR, ClassConfig, Config, TemplateRef
 from .llm import LLMProvider
+from .masking import MaskingError
 from .models import Case, CaseState, ClassifierResult, Ticket, text_hash
 from .rules import RuleHit, match_rules
-from .masking import MaskingError
 from .store import CaseStore
 from .templates import MissingField, fill
 

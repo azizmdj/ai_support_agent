@@ -20,7 +20,7 @@ from . import REPO_ROOT
 from .audit import AuditLog
 from .config import UNCLEAR, ClassConfig, Config
 from .llm import MESSAGE_CLOSE, MESSAGE_OPEN, FakeLLM, FallbackChain, LLMClassifier, LLMProvider
-from .models import CaseState, ClassifierResult, Ticket
+from .models import ClassifierResult, Ticket
 from .pipeline import Pipeline
 from .providers import TextModel
 from .providers.registry import active_route, build_provider
@@ -350,7 +350,8 @@ def summary_table(run: EvalRun) -> str:
     lines += [f"  {k.ljust(width)}  {_fmt(m[k])}" for k in SUMMARY_KEYS]
     lines += ["", "  per class:            recall  precision  support"]
     for cls, v in m["per_class"].items():
-        lines.append(f"    {cls.ljust(18)}  {_fmt(v['recall']).rjust(6)}  {_fmt(v['precision']).rjust(9)}  {str(v['support']).rjust(7)}")
+        recall, precision = _fmt(v["recall"]).rjust(6), _fmt(v["precision"]).rjust(9)
+        lines.append(f"    {cls.ljust(18)}  {recall}  {precision}  {str(v['support']).rjust(7)}")
     if run.sweep:
         lines += ["", "  threshold sweep (dev): threshold  coverage  wrong_draft_rate"]
         lines += [f"    {r['threshold']:>21}  {_fmt(r['coverage']).rjust(8)}  {_fmt(r['wrong_draft_rate']).rjust(16)}"

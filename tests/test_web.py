@@ -8,11 +8,11 @@ from conftest import ticket
 from fastapi.testclient import TestClient
 
 import triage_agent
+from triage_agent.audit import AuditLog
 from triage_agent.llm import FakeLLM
 from triage_agent.models import CaseState
 from triage_agent.pipeline import Pipeline
 from triage_agent.store import SQLiteCaseStore, connect
-from triage_agent.audit import AuditLog
 from triage_agent.web.app import create_app, relative_due
 
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
