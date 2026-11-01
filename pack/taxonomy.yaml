@@ -52,7 +52,7 @@ classes:
       - {id: fee_question_reply, default: true}
 
   - name: general_question
-    description: Any other product question, such as invoices, statements or app features.
+    description: A clear general question about the product or the account, such as invoices, statements or app features.
     priority: low
     team: general_support
     deadline: P3D
