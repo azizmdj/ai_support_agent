@@ -28,6 +28,9 @@ uv run pytest
 uv run python -m triage_agent serve             # reviewer console on http://127.0.0.1:8000
 uv run python -m triage_agent demo              # same flow on the command line
 uv run python -m triage_agent classify "<text>" # masked text and model result, for a live check
+uv run python -m triage_agent eval --split dev  # evaluation set; add --provider openai_main for a live run
 ```
+
+**Results** (gpt-4o-mini, 38 held-out test tickets): 0 of 11 fraud and complaint tickets drafted, 0 PII leaks, 37 of 38 classes correct. 100 synthetic tickets written by an LLM; see docs/project.md for limits.
 
 Design, scope and plan: [docs/project.md](docs/project.md)

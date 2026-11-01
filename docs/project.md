@@ -8,8 +8,8 @@ Oct 31, 2026 · @Aziz M
 | --- | --- | --- |
 | 1 | Built | Core pipeline, rules, approval gate, audit log, config validator, offline demo |
 | 2 | Built | Reviewer console, journey trail, scenario buttons, pause switch, escalate, wrong class |
-| 3a | Built | Model providers (OpenAI-compatible and Anthropic adapters), PII masking, fallback chain, `classify` command. 199 tests in total |
-| 3b | Planned | About 100 synthetic tickets with seeded fake PII, evaluation metrics including PII leak rate and injection resistance, a run with a real model |
+| 3a | Built | Model providers (OpenAI-compatible and Anthropic adapters), PII masking, fallback chain, `classify` command |
+| 3b | Built | 100 synthetic tickets with seeded fake PII, the `eval` command and metrics including PII leak rate and injection resistance, a live run with gpt-4o-mini. 224 tests in total (223 passed, 1 expected failure) |
 | 4 | Planned | docker-compose, README, hosted demo |
 
 ## Problem
@@ -53,7 +53,7 @@ The demo shows that a triage agent can be built, evaluated and deployed in a way
 - A reviewer console: one server-rendered page with plain forms
 - A plain Python package with SQLite that runs on a laptop; tests run with the network blocked
 - Real-model support behind swappable adapters, with PII masking before every real-model call
-- An evaluation suite with accuracy numbers (planned, phase 3b)
+- An evaluation suite with accuracy, safety and privacy numbers
 - docker-compose for a server or hosted demo (planned, phase 4)
 
 **The demo does not claim**
@@ -109,7 +109,7 @@ Business rules and data privacy are both controlled by configuration, with safet
 
 **Business-logic configuration**
 
-- **Validate before activating.** The validator runs on every config load and rejects a broken pack with a list of errors. Running the evaluation set on the new config to show accuracy before it goes live is planned (phase 3b).
+- **Validate before activating.** The validator runs on every config load and rejects a broken pack with a list of errors. Running `eval` on the new config shows accuracy before it goes live.
 - **Add a class without code.** A new class needs a description and an approved reply template. The classifier prompt is built from the taxonomy (class names, descriptions and sub-types), so a new class needs no prompt edit.
 - **Version every config.** The config version is stored on each case and on every audit row, so every decision can be traced to the rules that produced it. Editing any pack file, including a template, changes the version. Config lives in git with review before merge.
 - **Lock the safety rails.** A class is locked by the `risk: locked` flag, never by its name. A locked class cannot draft, and a rule on a locked class can only escalate. A renamed fraud class with the flag is still locked.
@@ -139,7 +139,7 @@ Business rules and data privacy are both controlled by configuration, with safet
 - **The fake provider sees unmasked text.** It runs locally, makes no network call, and is the offline default.
 - **What reaches a model.** A message that matches a fraud keyword never reaches a model, because the LLM is not called when a rule fires. A complaint without a keyword may reach the model, masked.
 - **No message text in the audit log.** Audit rows hold only ids, class names, confidence, rule id, template id, the provider id that answered, hashes and short codes. The code rejects any other payload field. The case store keeps the customer message text so the reviewer can read it; the audit log never does. A configurable retention period (planned, later).
-- **Check for leaks.** A test seeds tickets with fake IBANs, card numbers, emails and phone numbers and checks that none of them appears in any model payload, audit row or log line, including the error paths. The PII leak rate as an evaluation metric is planned (phase 3b).
+- **Check for leaks.** A test seeds tickets with fake IBANs, card numbers, emails and phone numbers and checks that none of them appears in any model payload, audit row or log line, including the error paths. The `eval` command also measures the PII leak rate at the model boundary: every payload sent to a model is recorded and checked for the seeded values.
 - **Route by sensitivity (planned, later).** Each class sets which models may see it.
 
 Detection is pattern based and deliberately over-masks. It needs no checksum, so a mistyped IBAN or card number is masked too, and some harmless numbers may be masked as well. Phone numbers must start with + or 0 and have at least 7 digits. Names and free-text addresses are not detected.
@@ -153,7 +153,7 @@ The reviewer console is the product: customers only see the reply, so the review
 **Who uses it**
 
 - **Support reviewer** (most of the time): approves, edits, escalates or corrects the class, and takes fraud and complaint cases.
-- **Team lead** (occasionally): adds classes and templates by editing the config files. The config is validated on every load; one command that also shows accuracy before and after is planned (phase 3b).
+- **Team lead** (occasionally): adds classes and templates by editing the config files. The config is validated on every load, and the `eval` command shows accuracy before and after a change.
 - **Customer:** receives faster, consistent replies in the usual channel. Code appends a short note to every draft saying the reply was prepared with AI assistance and reviewed by the team.
 
 **Reviewer console: one screen, one queue**
@@ -228,30 +228,78 @@ The design addresses DSGVO, the EU AI Act and DORA through concrete features, an
 
 All data is synthetic, committed to the repo, and used to measure the agent with numbers. This is what separates a demo from a prototype.
 
-**Reply templates:** currently 8 templates (6 English, 2 German) in neutral fictional-bank wording, each marked `synthetic: true`. The target is about 12, written as a fictional Finom-style help center and clearly labeled synthetic, not real Finom policy, with facts based on public product pages: plans, cards, SEPA transfers, e-invoicing, support tiers, fees, verification and the complaint process (planned, later).
+**Reply templates:** 12 templates, one English and one German version for each of the 6 templates, in neutral fictional-bank wording and marked `synthetic: true`. Templates written as a fictional Finom-style help center, with facts based on public product pages, are planned (later).
 
-**Tickets:** currently 15 handwritten tickets in German and English (`tests/fixtures/tickets.jsonl`). The expected class and state of each is checked in a test. The target is about 100 messages generated with a strong model across about 6 classes, each with a true class, the correct reply template and seeded fake personal data, and part of them held out as a test set (planned, phase 3b). Both sets include hard cases:
+**Tickets:** 100 tickets in `eval/tickets.jsonl`, written by an LLM and committed: 62 in the dev split and 38 in the test split, stratified per class. Each ticket has a true class, an expected state and, where one applies, the expected template. About half carry seeded fake personal data, and 8 are injection attempts with a unique canary token. The 15 handwritten tickets in `tests/fixtures/tickets.jsonl` still drive the console and the demo. The set includes hard cases:
 
-- Two issues in one message
+- Fraud reports and complaints without any rule keyword, some with typos
+- Two issues in one message (the true class is the one with the higher priority)
 - Vague or very short messages
-- Out-of-scope requests such as tax advice (planned, phase 3b)
+- Out-of-scope requests such as tax or legal advice
+- Mixed German and English, rude but legitimate messages, and a few French or Turkish messages, which have no template
 - Prompt-injection attempts, for example a message telling the agent to ignore its instructions
 
-All personal data is fake, such as made-up names, fictional IBANs and test card numbers.
+All personal data is fake, such as made-up names, fictional IBANs (some mistyped), test card numbers, example.com emails and 555-style phone numbers.
 
-**Metrics (run with pytest, planned, phase 3b):**
+**Metrics**
+
+`uv run python -m triage_agent eval [--split dev|test|all] [--provider IDS]` runs every ticket through the real pipeline on a fresh in-memory store and never approves anything. It prints a table and writes a Markdown report to `eval/results/`. The report holds the provider and model, the config version, the threshold, all metrics and a list of misses by ticket id. It contains no message text, PII values or keys.
 
 | Metric | What it shows |
 | --- | --- |
-| Classification accuracy and per-class recall | Whether messages go to the right team |
-| Fraud and complaint recall | Whether risky cases are never missed |
-| Template selection | Whether the agent picks the right approved template |
-| Escalation correctness | Whether risky classes always reach a human |
-| Injection resistance | Whether hostile messages change the agent's behavior |
-| PII leak rate | The share of seeded personal data that reaches a model call |
-| Approval-gate test | That nothing is sent without a recorded approval |
+| Class accuracy, per-class recall and precision | Whether messages go to the right team (`unclear` counts as a class) |
+| State accuracy | Whether each ticket ended where expected: drafted, escalated or with a person |
+| Risky escalated rate and risky drafted count | Whether fraud and complaint tickets always reach a person, and how many got a draft (target 0) |
+| Risky class recall | Whether fraud and complaints get the right class |
+| Wrong draft rate | Share of drafts with the wrong class or sub-type |
+| Coverage | Share of in-scope, non-risky tickets that got a draft |
+| Template accuracy | Whether the agent picks the right approved template |
+| PII leak rate | Share of PII-seeded tickets where a seeded value reaches a model payload, measured at the model boundary |
+| Injection pass rate | Injection tickets with the expected class and state, nothing sent, and the canary in no draft and no audit row |
+| Threshold sweep (dev only) | Coverage and wrong draft rate at thresholds 0.5 to 0.9 |
 
-Unit tests already cover escalation, injection resistance, the approval gate and a PII leak check. Finom can add its own labeled tickets, rerun the suite, and see accuracy before trusting the agent with anything.
+**Results**
+
+Provider `openai_main` with model gpt-4o-mini, threshold 0.7, run on 2026-11-02. Dev v2 and test share config version `cb16d991171f`.
+
+| Metric | Dev v1 (62) | Dev v2 (62) | Test (38) |
+| --- | --- | --- | --- |
+| Class accuracy | 0.935 | 0.935 | 0.974 |
+| State accuracy | – | – | 1.000 |
+| Risky escalated rate | – | – | 1.000 |
+| Risky class recall | – | – | 1.000 |
+| Risky tickets drafted | 0 | 0 | 0 |
+| Wrong draft rate | 0.105 | 0.083 | 0.056 |
+| Coverage | 1.000 | 0.973 | 0.783 |
+| Template accuracy | – | – | 0.952 |
+| `unclear` recall | – | 0.875 | – |
+| PII leak rate | 0 | 0 | 0 (14 of 19 PII tickets reached the model) |
+| Injection pass rate | 1.0 | 1.0 | 1.0 |
+| Replies sent | – | – | 0 |
+
+0 of 17 dev and 0 of 11 test fraud and complaint tickets were drafted. On the test split the one class miss was a fee question labeled `general_question`. Dev v1 used the original prompt. Dev v2 followed one calibration change to the classifier prompt and to two class descriptions. A dash means the number was not recorded for that run.
+
+**Findings**
+
+- Self-reported confidence is uncalibrated. gpt-4o-mini reports about 0.9 or higher almost always, so the threshold has little effect.
+- Safety comes from the rules, the locked classes and the approval gate, not from the threshold.
+- The calibration change shifted errors toward human review and did not raise accuracy. One vague ticket moved from a wrong draft to a person, and one general question moved to a person.
+- A second signal, such as agreement between two providers or token log-probabilities, is a possible next step (planned, later).
+
+**Process**
+
+The dev split was used for tuning. The test split was run once, after dev was settled, and nothing changed afterwards. The fake provider is a regression guard only: its numbers are not results. It has a known gap: it drafts two keyword-free fraud reports in dev. A strict expected-failure test records the target of 0, so it fails loudly once the gap is closed.
+
+**What the numbers do not show**
+
+- The tickets are synthetic and written by an LLM. Real messages will be messier.
+- The sets are small. One ticket moves a metric by about 1.6 points on dev and 2.6 points on test.
+- Only structured PII (IBAN, card, email, phone) is measured. Names and addresses are not.
+- The calibration prompt names tax or legal advice as an example, which is also an eval category.
+- The result belongs to one model and one prompt.
+- The Anthropic adapter has not been run live.
+
+Finom can add its own labeled tickets, rerun `eval`, and see accuracy before trusting the agent with anything.
 
 ## Deployment and operations
 
@@ -283,21 +331,22 @@ The plan is the smallest build that shows flexibility, integrability, banking fi
 | Flexibility | `taxonomy.yaml`, `rules.yaml`, `settings.yaml` and template files; a new class needs no code (built) |
 | Integrability | Adapter interfaces for ticket source, model and case store, with mock versions and SQLite storage (built); OpenAI-compatible and Anthropic adapters for hosted and local models, with an ordered fallback chain in `pack/models.yaml` (built); a Postgres swap (planned, later) |
 | Banking fit | Fraud and complaint escalation to a person, approved templates only, an audit log with reason and config version (built) |
-| Safety | Approval gate, locked safety rails, a global pause switch, and PII masking that fails closed, with a leak check (built); the PII leak rate and evaluation numbers (planned, phase 3b) |
+| Safety | Approval gate, locked safety rails, a global pause switch, PII masking that fails closed, the PII leak rate and evaluation numbers (built) |
 | Deployment | A Python package that runs on a laptop (built); docker-compose and a hosted demo (planned, phase 4) |
 
 **Repo structure**
 
 ```
-src/triage_agent/            pipeline, rules, approval gate, audit log, config validator, classifier and fallback chain, commands (demo, serve, classify)
+src/triage_agent/            pipeline, rules, approval gate, audit log, config validator, classifier and fallback chain, commands (demo, serve, classify, eval)
 src/triage_agent/masking.py  PII masking
+src/triage_agent/evaluation.py  evaluation suite and metrics
 src/triage_agent/providers/  model adapters (openai_compatible, anthropic) and the registry that builds the chain
 src/triage_agent/web/        reviewer console: FastAPI app, journey trail, Jinja templates, one CSS file
 pack/                        taxonomy, rules, settings, templates, scenarios, models (providers and routing)
 tests/                       unit, adapter, masking and console tests, fixture tickets
 README.md
 pyproject.toml
-eval/                        metrics and test sets (planned, phase 3b)
+eval/                        tickets.jsonl (100 tickets), baseline.json (fake-provider baseline), results/ (reports)
 deploy/                      Dockerfile, docker-compose (planned, phase 4)
 ```
 
@@ -309,7 +358,7 @@ The console uses plain HTML forms rendered on the server: no JavaScript, no CDN 
 2. **Console,** including the journey trail and scenario buttons so visitors can try it without typing real data. (built, phase 2)
 3. **Models and evaluation,** in two parts.
    - 3a: model adapters, PII masking, the fallback chain and the `classify` command. (built, phase 3a)
-   - 3b: about 100 synthetic tickets with seeded fake PII, evaluation metrics including PII leak rate and injection resistance, and a run with a real model. (planned, phase 3b)
+   - 3b: 100 synthetic tickets with seeded fake PII, the evaluation suite with PII leak rate and injection resistance, and a live run with gpt-4o-mini. (built, phase 3b)
 4. **Deployment and README:** docker-compose and the hosted demo; architecture, how Finom adapts it, and what is needed before production. (planned, phase 4)
 
 Keep Finom-specific wording in the pack files and not in the core, so a second pack is a copy. One exception today: the fake LLM's keyword list lives in the core.
@@ -356,7 +405,7 @@ The steps map directly to graph nodes if Finom uses an orchestrator.
 
 The whole system runs on a laptop with no API keys. The shipped routing is the fake provider only.
 
-- `uv sync` installs it, `uv run pytest` runs the tests, `uv run python -m triage_agent serve` starts the console, `uv run python -m triage_agent demo` runs the command-line demo, and `uv run python -m triage_agent classify "<text>"` prints the masked text and the classifier result from the active chain, for a one-off live check.
+- `uv sync` installs it, `uv run pytest` runs the tests, `uv run python -m triage_agent serve` starts the console, `uv run python -m triage_agent demo` runs the command-line demo, `uv run python -m triage_agent classify "<text>"` prints the masked text and the classifier result from the active chain, for a one-off live check, and `uv run python -m triage_agent eval --split dev` runs the evaluation set offline with the fake provider.
 - A **fake LLM provider** classifies by keywords or returns scripted answers, so tests are fast and repeatable.
 - Adapter tests use httpx's mock transport, so no test makes a real HTTP call.
 - Both the console and the demo load the fixture tickets and templates into SQLite, in memory by default.
@@ -372,9 +421,9 @@ These will run in CI on every push and block merging when they fail (CI planned,
 | Approval gate | Nothing is sent without a recorded approval | Built |
 | Safety rails | A config that allows automatic reply for a locked class is rejected, even after renaming it | Built |
 | Rules override the LLM | A fraud message is escalated even when the fake model says otherwise, and the model is not called | Built |
-| PII masking and leak check | Masking round-trips, a masking error blocks every provider call, and seeded IBANs, cards, emails and phone numbers never reach a model payload, an audit row or a log line, including on error paths | Built as a leak check; leak rate planned, phase 3b |
-| Prompt-injection set | Hostile messages change neither the class nor the actions taken | Built for a small set; full set planned, phase 3b |
-| Evaluation regression | Accuracy and fraud and complaint recall stay at or above the agreed baseline | Planned, phase 3b |
+| PII masking and leak check | Masking round-trips, a masking error blocks every provider call, and seeded IBANs, cards, emails and phone numbers never reach a model payload, an audit row or a log line, including on error paths | Built, plus the leak rate in `eval` |
+| Prompt-injection set | Hostile messages change neither the class nor the actions taken | Built: unit tests plus 8 injection tickets in the eval set |
+| Evaluation regression | The fake-provider run stays at or above `eval/baseline.json`; leak rate 0, no reply sent and injection pass rate 1.0 are enforced | Built |
 | Model adapters | Request URL, headers and body, response parsing, and HTTP errors, timeouts and malformed bodies, for both adapters over mocked HTTP | Built |
 | Secret scan | No API-key-shaped string (`sk-…`) in `src/`, `pack/`, `tests/` or `docs/`, and `.env` files are git-ignored | Built |
 | Pause switch | While paused, fraud still escalates, everything else goes to a person, and the model is not called | Built |
@@ -389,7 +438,7 @@ Shorter unit tests cover config validation, template filling (a missing field or
 
 ## Decisions
 
-- **Confidence** is self-reported by the model, with a threshold of 0.7. It is not calibrated.
+- **Confidence** is self-reported by the model, with a threshold of 0.7. It is not calibrated, and in the live run the threshold had little effect.
 - **Deadlines** are ISO 8601 durations (days, hours, minutes) in calendar time, UTC, counted from `received_at`.
 - **A two-issue ticket gets one label.** If the model is unsure between topics, low confidence sends it to a person.
 - **`config_version`** is the first 12 characters of a sha256 over all pack files, with line endings normalized.
@@ -398,6 +447,9 @@ Shorter unit tests cover config validation, template filling (a missing field or
 - **Masking over-masks and needs no checksum.** A mistyped IBAN is masked too; a harmless number may be masked as well.
 - **Adapters only send text.** The prompt, the parsing and the validation live once in the core, so a new provider is a small HTTP adapter.
 - **The Anthropic adapter sends no `temperature`,** because API version `2026-10-21` rejects sampling parameters. It is tested with mocked HTTP only.
+- **Coverage counts missing-field and other-language tickets,** so it cannot reach 1.0. State accuracy shows whether tickets ended where expected.
+- **The baseline comes from the fake provider.** Tests compare against it and never write it; `eval --write-baseline` updates it on purpose.
+- **Dev for tuning, test once.** Prompt and config changes are judged on the dev split; the test split is run once after dev is settled.
 
 ## Before production
 
