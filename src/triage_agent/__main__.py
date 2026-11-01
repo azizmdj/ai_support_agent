@@ -57,8 +57,23 @@ def main(argv: list[str] | None = None) -> int:
     p_demo = sub.add_parser("demo", help="run the fixture tickets through the pipeline")
     p_demo.add_argument("--pack", type=Path, default=DEFAULT_PACK)
     p_demo.add_argument("--tickets", type=Path, default=DEFAULT_TICKETS)
+    p_serve = sub.add_parser("serve", help="run the reviewer console on http://127.0.0.1:8000")
+    p_serve.add_argument("--pack", type=Path, default=DEFAULT_PACK)
+    p_serve.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
+    if args.command == "serve":
+        return serve(args.pack, args.port)
     return demo(args.pack, args.tickets)
+
+
+def serve(pack: Path, port: int) -> int:
+    import uvicorn
+
+    from .web.app import create_app
+
+    # DB path from TRIAGE_DB (default in-memory), reviewer id from TRIAGE_REVIEWER.
+    uvicorn.run(create_app(pack=pack), host="127.0.0.1", port=port)
+    return 0
 
 
 if __name__ == "__main__":

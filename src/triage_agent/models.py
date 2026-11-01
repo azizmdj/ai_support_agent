@@ -53,7 +53,8 @@ class CaseState(str, Enum):
 ALLOWED_TRANSITIONS: dict[CaseState, set[CaseState]] = {
     CaseState.NEW: {CaseState.DRAFTED, CaseState.NEEDS_PERSON, CaseState.ESCALATED},
     CaseState.ESCALATED: {CaseState.TAKEN},
-    CaseState.DRAFTED: {CaseState.SENT},
+    CaseState.DRAFTED: {CaseState.SENT, CaseState.ESCALATED, CaseState.DRAFTED, CaseState.NEEDS_PERSON},
+    CaseState.NEEDS_PERSON: {CaseState.ESCALATED, CaseState.DRAFTED, CaseState.NEEDS_PERSON},
 }
 
 

@@ -17,7 +17,9 @@ from triage_agent.store import SQLiteCaseStore, connect
 from triage_agent.ticket_source import MockTicketSource, load_tickets
 
 
-# --- No network: any socket use fails for the whole test session. -----------------------------
+# --- No network: opening any new socket or connection fails for the whole test session. -------
+# Only socketpair() is allowed: the in-process test client's event loop needs it for its
+# self-pipe, and on Windows that is a loopback pair. It never leaves the machine.
 class _NoNetwork(OSError):
     pass
 
@@ -26,15 +28,33 @@ def _blocked(*args, **kwargs):
     raise _NoNetwork("network access is disabled in tests")
 
 
+_RealSocket = socket.socket
+
+
 class _BlockedSocket(socket.socket):
-    def __init__(self, *args, **kwargs):
-        _blocked()
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        if fileno is None:  # wrapping an already open fd (accept()) is not new network use
+            _blocked()
+        super().__init__(family, type, proto, fileno)
+
+
+def _loopback_socketpair(family=socket.AF_INET, type=socket.SOCK_STREAM, proto=0):
+    listener = _RealSocket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        client = _RealSocket(socket.AF_INET, socket.SOCK_STREAM)
+        client.connect(listener.getsockname())
+        server, _ = listener.accept()
+        return server, client
+    finally:
+        listener.close()
 
 
 socket.socket = _BlockedSocket  # type: ignore[misc]
 socket.create_connection = _blocked  # type: ignore[assignment]
 socket.getaddrinfo = _blocked  # type: ignore[assignment]
-socket.socketpair = _blocked  # type: ignore[assignment]
+socket.socketpair = _loopback_socketpair  # type: ignore[assignment]
 
 
 # --- Shared fixtures -------------------------------------------------------------------------

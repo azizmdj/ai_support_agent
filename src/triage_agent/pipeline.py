@@ -9,10 +9,10 @@ from __future__ import annotations
 from pydantic import ValidationError
 
 from .audit import AuditLog
-from .config import UNCLEAR, ClassConfig, Config
+from .config import UNCLEAR, ClassConfig, Config, TemplateRef
 from .llm import LLMProvider
 from .models import Case, CaseState, ClassifierResult, Ticket, text_hash
-from .rules import match_rules
+from .rules import RuleHit, match_rules
 from .store import CaseStore
 from .templates import MissingField, fill
 
@@ -34,31 +34,38 @@ class Pipeline:
             received_at=ticket.received_at,
             config_version=self.config.version,
         )
+        self.store.save_ticket(ticket)
         self.store.save(case)
         self.audit.write(case.id, ACTOR, "received", ticket_id=ticket.id, lang=ticket.language)
 
-        escalate_by_rule = self._classify(ticket, case)
+        outcome = self._classify(ticket, case)
         cls = self.config.classes[case.class_name]
-        case.team = cls.team
-        case.priority = cls.priority
-        case.due_at = case.received_at + cls.deadline_delta
+        apply_class(case, cls)
 
-        if cls.locked or escalate_by_rule:
+        if cls.locked or outcome == "escalate":
             self._finish(case, CaseState.ESCALATED, "locked_class" if cls.locked else "rule_escalation")
+        elif outcome == "paused":
+            self._finish(case, CaseState.NEEDS_PERSON, "paused")
         elif cls.draft_mode != "template":
             self._finish(case, CaseState.NEEDS_PERSON, "no_draft_class")
         else:
-            self._draft(ticket, case, cls)
+            state, reason_code = draft_reply(self.config, ticket, case, default_or_subtype(cls, case.subtype),
+                                             self.audit, ACTOR)
+            self._finish(case, state, reason_code)
         return case
 
-    def _classify(self, ticket: Ticket, case: Case) -> bool:
-        """Set class on the case. Returns True when a rule demands escalation."""
+    def _classify(self, ticket: Ticket, case: Case) -> str | None:
+        """Set class on the case. Returns "escalate" (rule demands it), "paused" or None."""
         hit = match_rules(ticket, self.config)
+        if hit is not None and hit.rule.action == "escalate":
+            return self._rule_hit(case, hit)
+        if self.store.is_paused():
+            # Pause switch: no model call, everything a rule does not escalate goes to a person.
+            case.class_name, case.reason = UNCLEAR, "paused"
+            self.audit.write(case.id, ACTOR, "held_paused", reason_code="paused")
+            return "paused"
         if hit is not None:
-            case.class_name, case.rule_id = hit.class_name, hit.rule.id
-            case.reason = f"rule {hit.rule.id}"
-            self.audit.write(case.id, ACTOR, "rule_matched", rule_id=hit.rule.id, **{"class": hit.class_name})
-            return hit.rule.action == "escalate"
+            return self._rule_hit(case, hit)
 
         classes = [c for c in self.config.classes.values() if c.name != UNCLEAR]
         try:
@@ -88,43 +95,65 @@ class Pipeline:
             confidence=result.confidence, reason_code=reason_code, subtype=case.subtype,
             **{"class": case.class_name},
         )
-        return False
+        return None
 
-    def _model_error(self, case: Case, exc: Exception, reason_code: str) -> bool:
+    def _rule_hit(self, case: Case, hit: RuleHit) -> str | None:
+        case.class_name, case.rule_id = hit.class_name, hit.rule.id
+        case.reason = f"rule {hit.rule.id}"
+        self.audit.write(case.id, ACTOR, "rule_matched", rule_id=hit.rule.id, **{"class": hit.class_name})
+        return "escalate" if hit.rule.action == "escalate" else None
+
+    def _model_error(self, case: Case, exc: Exception, reason_code: str) -> None:
         case.class_name = UNCLEAR
         case.reason = f"model error ({reason_code})"
         self.audit.write(case.id, ACTOR, "model_error", error_type=type(exc).__name__, reason_code=reason_code)
-        return False
-
-    def _draft(self, ticket: Ticket, case: Case, cls: ClassConfig) -> None:
-        ref = next((t for t in cls.templates if case.subtype and t.when == case.subtype), None)
-        ref = ref or next(t for t in cls.templates if t.default)
-        case.template_id = ref.id
-        self.audit.write(case.id, ACTOR, "template_selected", template_id=ref.id, subtype=case.subtype)
-
-        template = self.config.template(ref.id, ticket.language)
-        if template is None:
-            case.reason += f"; no {ticket.language} template"
-            self.audit.write(case.id, ACTOR, "draft_blocked", reason_code="missing_language", lang=ticket.language)
-            self._finish(case, CaseState.NEEDS_PERSON, "missing_language")
-            return
-        allowed = set(self.config.settings.allowed_fields)
-        try:
-            body = fill(template, ticket.metadata, allowed)
-        except MissingField as exc:
-            case.reason += f"; missing field {exc.field}"
-            self.audit.write(case.id, ACTOR, "draft_blocked", reason_code="missing_field", field=exc.field)
-            self._finish(case, CaseState.NEEDS_PERSON, "missing_field")
-            return
-        case.draft = body.rstrip("\n") + "\n\n" + self.config.settings.ai_disclosure[ticket.language] + "\n"
-        case.draft_hash = text_hash(case.draft)
-        self.audit.write(case.id, ACTOR, "drafted", template_id=ref.id, draft_hash=case.draft_hash)
-        self._finish(case, CaseState.DRAFTED, "drafted")
+        return None
 
     def _finish(self, case: Case, state: CaseState, reason_code: str) -> None:
-        case.transition(state)
-        self.store.save(case)
-        self.audit.write(
-            case.id, ACTOR, "routed", state=state.value, team=case.team, reason_code=reason_code,
-            **{"class": case.class_name},
-        )
+        finish(case, state, reason_code, self.store, self.audit, ACTOR)
+
+
+def apply_class(case: Case, cls: ClassConfig) -> None:
+    case.class_name = cls.name
+    case.team = cls.team
+    case.priority = cls.priority
+    case.due_at = case.received_at + cls.deadline_delta
+
+
+def default_or_subtype(cls: ClassConfig, subtype: str | None) -> TemplateRef:
+    ref = next((t for t in cls.templates if subtype and t.when == subtype), None)
+    return ref or next(t for t in cls.templates if t.default)
+
+
+def draft_reply(
+    config: Config, ticket: Ticket, case: Case, ref: TemplateRef, audit: AuditLog, actor: str
+) -> tuple[CaseState, str]:
+    """Fill the template into case.draft. Returns the target state and a reason code. Never sends."""
+    case.draft, case.draft_hash, case.edited = None, None, False
+    case.template_id = ref.id
+    audit.write(case.id, actor, "template_selected", template_id=ref.id, subtype=case.subtype)
+
+    template = config.template(ref.id, ticket.language)
+    if template is None:
+        case.reason += f"; no {ticket.language} template"
+        audit.write(case.id, actor, "draft_blocked", reason_code="missing_language", lang=ticket.language)
+        return CaseState.NEEDS_PERSON, "missing_language"
+    try:
+        body = fill(template, ticket.metadata, set(config.settings.allowed_fields))
+    except MissingField as exc:
+        case.reason += f"; missing field {exc.field}"
+        audit.write(case.id, actor, "draft_blocked", reason_code="missing_field", field=exc.field)
+        return CaseState.NEEDS_PERSON, "missing_field"
+    case.draft = body.rstrip("\n") + "\n\n" + config.settings.ai_disclosure[ticket.language] + "\n"
+    case.draft_hash = text_hash(case.draft)
+    audit.write(case.id, actor, "drafted", template_id=ref.id, draft_hash=case.draft_hash)
+    return CaseState.DRAFTED, "drafted"
+
+
+def finish(case: Case, state: CaseState, reason_code: str, store: CaseStore, audit: AuditLog, actor: str) -> None:
+    case.transition(state)
+    store.save(case)
+    audit.write(
+        case.id, actor, "routed", state=state.value, team=case.team, reason_code=reason_code,
+        **{"class": case.class_name},
+    )
