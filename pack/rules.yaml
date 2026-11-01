@@ -1,0 +1,32 @@
+# Rules run before the LLM and always win. When a rule fires, the LLM is not called.
+# patterns: keywords (matched at word start, case- and accent-insensitive, ß = ss)
+#           or "re:<regex>" applied to the normalized (casefolded, accent-free) text.
+# action: escalate (straight to a person, no draft) | route (force the class, normal drafting).
+# Rules on a locked class must use action: escalate.
+# If several rules fire, the class with the highest priority wins.
+rules:
+  - id: fraud_keywords
+    patterns:
+      - fraud
+      - scam
+      - phishing
+      - hacked
+      - unauthori
+      - betrug
+      - nicht autorisiert
+      - gehackt
+      - 're:\bdid not (make|authori[sz]e)\b'
+      - 're:\bnicht von mir\b'
+    action: escalate
+    force_class: fraud_report
+
+  - id: fraud_police_de
+    languages: [de]
+    patterns: [polizei, anzeige erstattet]
+    action: escalate
+    force_class: fraud_report
+
+  - id: complaint_keywords
+    patterns: [complaint, beschwerde, ombudsman, ombudsmann]
+    action: escalate
+    force_class: complaint

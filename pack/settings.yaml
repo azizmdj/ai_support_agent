@@ -1,0 +1,12 @@
+confidence_threshold: 0.7
+unclear_deadline: PT24H
+# The only ticket metadata fields a template may use. Message text is never a field.
+allowed_fields:
+  - customer_name
+  - card_last4
+  - transfer_reference
+  - plan_name
+# Appended by code to every draft; templates must not contain it.
+ai_disclosure:
+  en: "This reply was prepared with AI assistance and reviewed by our support team."
+  de: "Diese Antwort wurde mit KI-Unterstützung erstellt und von unserem Support-Team geprüft."

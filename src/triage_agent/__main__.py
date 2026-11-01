@@ -1,0 +1,65 @@
+"""Command line: `python -m triage_agent demo` runs the fixture tickets offline."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from . import DEFAULT_PACK, DEFAULT_TICKETS
+from .audit import AuditLog
+from .config import load_config
+from .gate import Gate
+from .llm import FakeLLM
+from .models import CaseState
+from .pipeline import Pipeline
+from .store import SQLiteCaseStore, connect
+from .ticket_source import MockTicketSource, load_tickets
+
+
+def demo(pack: Path, tickets_path: Path) -> int:
+    config = load_config(pack)
+    conn = connect(":memory:")
+    store, audit = SQLiteCaseStore(conn), AuditLog(conn, config.version)
+    source = MockTicketSource(load_tickets(tickets_path))
+    pipeline = Pipeline(config, FakeLLM(), store, audit)
+
+    cases = [pipeline.process(t) for t in source.fetch_new()]
+    print(f"config_version {config.version}  |  {len(cases)} tickets  |  fake LLM, in-memory SQLite\n")
+    rows = [("ticket", "class", "state", "reason", "due_at (UTC)")]
+    rows += [
+        (c.ticket_id, c.class_name or "", c.state.value, c.reason, c.due_at.strftime("%Y-%m-%d %H:%M") if c.due_at else "")
+        for c in cases
+    ]
+    widths = [max(len(r[i]) for r in rows) for i in range(5)]
+    for i, row in enumerate(rows):
+        print("  ".join(cell.ljust(w) for cell, w in zip(row, widths)).rstrip())
+        if i == 0:
+            print("  ".join("-" * w for w in widths))
+
+    drafted = next((c for c in cases if c.state == CaseState.DRAFTED), None)
+    if drafted is None:
+        print("\nno drafted case to approve")
+        return 1
+    Gate(store, audit, source).approve(drafted.id, "demo", drafted.draft_hash or "")
+    ticket_id, body = source.sent[-1]
+    print(f"\nreviewer 'demo' approved {drafted.id} (template {drafted.template_id}); reply sent to {ticket_id}:\n")
+    print("    " + body.rstrip().replace("\n", "\n    "))
+    print(f"\naudit rows written: {len(audit.events())}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+    parser = argparse.ArgumentParser(prog="triage_agent")
+    sub = parser.add_subparsers(dest="command", required=True)
+    p_demo = sub.add_parser("demo", help="run the fixture tickets through the pipeline")
+    p_demo.add_argument("--pack", type=Path, default=DEFAULT_PACK)
+    p_demo.add_argument("--tickets", type=Path, default=DEFAULT_TICKETS)
+    args = parser.parse_args(argv)
+    return demo(args.pack, args.tickets)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

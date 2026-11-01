@@ -1,0 +1,62 @@
+# Message classes. `risk: locked` classes always go to a person and can never draft a reply.
+# deadline: ISO 8601 duration (days/hours/minutes, calendar time, UTC) counted from received_at.
+# The `unclear` class is built in (team human_queue, no draft); do not declare it here.
+classes:
+  - name: fraud_report
+    description: The customer reports a payment, login or card use they did not make, or a scam.
+    priority: urgent
+    team: fraud_team
+    deadline: PT1H
+    risk: locked
+    draft_mode: none
+
+  - name: complaint
+    description: The customer is dissatisfied and complains about the service or a decision.
+    priority: high
+    team: complaints_team
+    deadline: P15D
+    risk: locked
+    draft_mode: none
+
+  - name: card_blocked
+    description: The customer's card is blocked, lost, stolen or declined.
+    priority: high
+    team: cards_support
+    deadline: PT4H
+    risk: normal
+    draft_mode: template
+    subtypes: [lost_or_stolen, blocked_after_pin_attempts]
+    templates:
+      - {id: card_blocked_lost, when: lost_or_stolen}
+      - {id: card_blocked_pin, when: blocked_after_pin_attempts}
+      - {id: card_blocked_general, default: true}
+
+  - name: pending_transfer
+    description: A transfer the customer sent or expects has not arrived or is still pending.
+    priority: normal
+    team: payments_support
+    deadline: PT24H
+    risk: normal
+    draft_mode: template
+    templates:
+      - {id: pending_transfer_reply, default: true}
+
+  - name: fee_question
+    description: The customer asks which fees apply or why a fee was charged.
+    priority: normal
+    team: billing_support
+    deadline: P2D
+    risk: normal
+    draft_mode: template
+    templates:
+      - {id: fee_question_reply, default: true}
+
+  - name: general_question
+    description: Any other product question, such as invoices, statements or app features.
+    priority: low
+    team: general_support
+    deadline: P3D
+    risk: normal
+    draft_mode: template
+    templates:
+      - {id: general_question_reply, default: true}
