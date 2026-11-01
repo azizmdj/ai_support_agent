@@ -25,7 +25,7 @@
     {% endif %}
   </form>
   <nav class="scenarios" aria-label="Demo scenarios">
-    <span>Try a scenario:</span>
+    <span>Send a test message:</span>
     {% for s in scenarios %}
       <form method="post" action="/scenarios/{{ s.id }}"><button type="submit">{{ s.label }}</button></form>
     {% endfor %}
@@ -68,11 +68,14 @@
     {% if not selected %}
       <div class="card empty-queue">
         <h1>Queue is empty.</h1>
-        <p>Try a scenario button above.</p>
+        <p>Send a test message above.</p>
+        {% set generic = true %}{% include "journey.html" %}
+        <p class="hint">Try a scenario button above. Each one sends a new ticket through these six steps.</p>
       </div>
     {% else %}
       {% set c = selected %}
       <article class="card state-{{ c.state.value }}">
+        {% set generic = false %}{% include "journey.html" %}
         <p class="reason"><strong>Why:</strong> {{ c.reason }}</p>
         <dl class="facts">
           <div><dt>Ticket</dt><dd>{{ c.ticket_id }} ({{ c.language }})</dd></div>

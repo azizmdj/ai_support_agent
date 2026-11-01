@@ -29,6 +29,7 @@ from ..models import Case, CaseState, Ticket, normalize_newlines
 from ..pipeline import Pipeline
 from ..store import CaseNotFound, SQLiteCaseStore, connect
 from ..ticket_source import MockTicketSource, load_tickets
+from .journey import generic_journey, journey
 
 HERE = Path(__file__).parent
 
@@ -138,6 +139,7 @@ def create_app(
         current = now()
         ticket = store.get_ticket(selected.ticket_id) if selected else None
         all_lanes = lanes()
+        events = audit.events(selected.id) if selected else []
         html = env.get_template("console.html").render(
             reviewer=reviewer,
             paused=store.is_paused(),
@@ -145,7 +147,8 @@ def create_app(
             lanes=[(key, title, all_lanes[key]) for key, title, _ in LANES],
             selected=selected,
             ticket=ticket,
-            events=audit.events(selected.id) if selected else [],
+            events=events,
+            steps=journey(selected, events) if selected else generic_journey(),
             classes=[c for c in config.classes.values() if c.name != UNCLEAR],
             due=lambda c: relative_due(c.due_at, current),
             banner=MESSAGES.get(msg or ""),

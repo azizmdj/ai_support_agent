@@ -51,3 +51,20 @@ code { font-size: .85em; }
 .details table { width: 100%; border-collapse: collapse; margin-top: .5rem; font-size: .85em; }
 .details th, .details td { text-align: left; padding: .25rem .4rem; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
 .empty-queue { text-align: center; padding: 3rem; }
+
+/* Journey trail: a horizontal strip that wraps. Status and actor are always written out as text. */
+.journey { margin: 0 0 1rem; }
+.journey h2 { font-size: .95rem; margin: 0 0 .4rem; }
+.trail { display: flex; flex-wrap: wrap; gap: .5rem; list-style: none; margin: 0; padding: 0; }
+.step { flex: 1 1 130px; display: flex; flex-direction: column; gap: .15rem; padding: .45rem .55rem; border: 1px solid #d1d5db; border-radius: 5px; background: #fff; font-size: .85em; }
+.step-name { font-weight: 700; }
+.actor { align-self: flex-start; padding: 0 .35rem; border: 1px solid #6b7280; border-radius: 3px; font-size: .85em; }
+.actor-ai { border-style: dashed; }
+.result { overflow-wrap: anywhere; }
+.status { margin-top: auto; color: #374151; }
+.step-done { background: #f9fafb; }
+.step-skipped { border-style: dashed; color: #4b5563; }
+.step-your-turn { border: 2px solid #1f3a5f; background: #eef3fa; }
+.step-pending { color: #6b7280; }
+.empty-queue .journey { text-align: left; margin: 1.5rem 0; }
+.hint { color: #4b5563; }
