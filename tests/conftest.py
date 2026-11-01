@@ -117,3 +117,10 @@ def ticket(text, *, id="X1", language="en", metadata=None, received_at=None) -> 
         metadata={"customer_name": "Test Kunde", "plan_name": "Smart", "card_last4": "1234",
                   "transfer_reference": "TRX-1"} if metadata is None else metadata,
     )
+
+
+@pytest.fixture(autouse=True)
+def _clean_provider_env(monkeypatch):
+    """Tests never pick up a developer's real keys or provider override."""
+    for name in ("TRIAGE_PROVIDER", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "TRIAGE_DB", "TRIAGE_REVIEWER"):
+        monkeypatch.delenv(name, raising=False)

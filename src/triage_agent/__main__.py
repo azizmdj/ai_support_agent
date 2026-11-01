@@ -10,7 +10,10 @@ from . import DEFAULT_PACK, DEFAULT_TICKETS
 from .audit import AuditLog
 from .config import load_config
 from .gate import Gate
-from .llm import FakeLLM
+from .config import UNCLEAR, ConfigError
+from .masking import mask
+from .providers import ProviderError
+from .providers.registry import build_llm
 from .models import CaseState
 from .pipeline import Pipeline
 from .store import SQLiteCaseStore, connect
@@ -22,10 +25,11 @@ def demo(pack: Path, tickets_path: Path) -> int:
     conn = connect(":memory:")
     store, audit = SQLiteCaseStore(conn), AuditLog(conn, config.version)
     source = MockTicketSource(load_tickets(tickets_path))
-    pipeline = Pipeline(config, FakeLLM(), store, audit)
+    llm = build_llm(config)
+    pipeline = Pipeline(config, llm, store, audit)
 
     cases = [pipeline.process(t) for t in source.fetch_new()]
-    print(f"config_version {config.version}  |  {len(cases)} tickets  |  fake LLM, in-memory SQLite\n")
+    print(f"config_version {config.version}  |  {len(cases)} tickets  |  model: {llm.describe()}  |  in-memory SQLite\n")
     rows = [("ticket", "class", "state", "reason", "due_at (UTC)")]
     rows += [
         (c.ticket_id, c.class_name or "", c.state.value, c.reason, c.due_at.strftime("%Y-%m-%d %H:%M") if c.due_at else "")
@@ -57,13 +61,38 @@ def main(argv: list[str] | None = None) -> int:
     p_demo = sub.add_parser("demo", help="run the fixture tickets through the pipeline")
     p_demo.add_argument("--pack", type=Path, default=DEFAULT_PACK)
     p_demo.add_argument("--tickets", type=Path, default=DEFAULT_TICKETS)
+    p_cls = sub.add_parser("classify", help="mask one message and classify it with the active provider chain")
+    p_cls.add_argument("text")
+    p_cls.add_argument("--pack", type=Path, default=DEFAULT_PACK)
     p_serve = sub.add_parser("serve", help="run the reviewer console on http://127.0.0.1:8000")
     p_serve.add_argument("--pack", type=Path, default=DEFAULT_PACK)
     p_serve.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
-    if args.command == "serve":
-        return serve(args.pack, args.port)
-    return demo(args.pack, args.tickets)
+    try:
+        if args.command == "classify":
+            return classify(args.pack, args.text)
+        if args.command == "serve":
+            return serve(args.pack, args.port)
+        return demo(args.pack, args.tickets)
+    except ConfigError as exc:  # names a missing variable, never a value
+        print(exc, file=sys.stderr)
+        return 2
+
+
+def classify(pack: Path, text: str) -> int:
+    """One-off live check. Runs only the classifier (no rules, no draft, nothing stored or sent)."""
+    config = load_config(pack)
+    llm = build_llm(config)
+    print(f"model chain: {llm.describe()}")
+    print(f"masked text: {mask(text)[0]}")
+    classes = [c for c in config.classes.values() if c.name != UNCLEAR]
+    try:
+        result = llm.classify(text, classes)
+    except ProviderError as exc:
+        print(f"provider error: {exc}", file=sys.stderr)
+        return 1
+    print(f"result: {result.model_dump_json()}")
+    return 0
 
 
 def serve(pack: Path, port: int) -> int:

@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 ALLOWED_PAYLOAD_KEYS = {
     "class", "subtype", "confidence", "rule_id", "template_id", "draft_hash", "old_hash", "new_hash",
-    "reason_code", "field", "lang", "error_type", "state", "team", "ticket_id", "old_class", "new_class",
+    "reason_code", "field", "lang", "error_type", "state", "team", "ticket_id", "old_class", "new_class", "provider",
 }
 
 

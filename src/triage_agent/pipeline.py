@@ -13,6 +13,7 @@ from .config import UNCLEAR, ClassConfig, Config, TemplateRef
 from .llm import LLMProvider
 from .models import Case, CaseState, ClassifierResult, Ticket, text_hash
 from .rules import RuleHit, match_rules
+from .masking import MaskingError
 from .store import CaseStore
 from .templates import MissingField, fill
 
@@ -73,6 +74,11 @@ class Pipeline:
             result = raw if isinstance(raw, ClassifierResult) else ClassifierResult.model_validate(raw)
             # Re-validate even real instances (model_construct could skip checks).
             result = ClassifierResult.model_validate(result.model_dump())
+        except MaskingError as exc:
+            # Fail closed: masking failed, so no model was called. A person handles the case.
+            case.class_name, case.reason = UNCLEAR, "masking failed: no model call"
+            self.audit.write(case.id, ACTOR, "mask_failed", error_type=type(exc).__name__, reason_code="mask_failed")
+            return None
         except (ValidationError, TypeError, ValueError) as exc:
             return self._model_error(case, exc, "invalid_output")
         except Exception as exc:  # provider down, timeout, anything
@@ -94,6 +100,7 @@ class Pipeline:
             case.id, ACTOR, "classified",
             confidence=result.confidence, reason_code=reason_code, subtype=case.subtype,
             **{"class": case.class_name},
+            **({"provider": result.provider} if result.provider else {}),
         )
         return None
 

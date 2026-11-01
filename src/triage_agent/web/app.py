@@ -24,7 +24,9 @@ from .. import DEFAULT_PACK, DEFAULT_TICKETS
 from ..audit import AuditLog
 from ..config import UNCLEAR, load_config
 from ..gate import Gate, GateError
-from ..llm import FakeLLM, LLMProvider
+from ..llm import FallbackChain, LLMProvider
+from ..masking import mask
+from ..providers.registry import build_llm
 from ..models import Case, CaseState, Ticket, normalize_newlines
 from ..pipeline import Pipeline
 from ..store import CaseNotFound, SQLiteCaseStore, connect
@@ -94,7 +96,9 @@ def create_app(
     conn = connect(db_path or os.environ.get("TRIAGE_DB", ":memory:"))
     store, audit = SQLiteCaseStore(conn), AuditLog(conn, config.version)
     source = MockTicketSource([])
-    pipeline = Pipeline(config, llm or FakeLLM(), store, audit)
+    llm = llm or build_llm(config)  # fails at startup with a clear message if a key variable is unset
+    model_label = llm.describe() if isinstance(llm, FallbackChain) else type(llm).__name__
+    pipeline = Pipeline(config, llm, store, audit)
     gate = Gate(store, audit, source, config)
     reviewer = reviewer_id or os.environ.get("TRIAGE_REVIEWER", "demo-reviewer")
     lock = threading.Lock()  # one SQLite connection, used by one request at a time
@@ -148,6 +152,9 @@ def create_app(
             selected=selected,
             ticket=ticket,
             events=events,
+            model_label=model_label,
+            masked=masked_view(ticket.text) if ticket else None,
+            model_called=any(e.event in {"classified", "model_error"} for e in events),
             steps=journey(selected, events) if selected else generic_journey(),
             classes=[c for c in config.classes.values() if c.name != UNCLEAR],
             due=lambda c: relative_due(c.due_at, current),
@@ -155,6 +162,13 @@ def create_app(
             banner_is_error=msg in {"stale", "error"},
         )
         return HTMLResponse(html)
+
+    def masked_view(text: str) -> str:
+        """What a real model sees. Computed on the fly from the stored ticket, never stored."""
+        try:
+            return mask(text)[0]
+        except Exception:
+            return "(masking failed: nothing would be sent to a model)"
 
     def get_case(case_id: str) -> Case:
         try:

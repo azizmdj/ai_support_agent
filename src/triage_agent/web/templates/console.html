@@ -13,6 +13,7 @@
     <span class="tag">Unofficial demo, synthetic data</span>
   </div>
   <div class="who">Reviewer: <strong>{{ reviewer }}</strong></div>
+  <div class="model">Model: <strong>{{ model_label }}</strong></div>
   <form method="post" action="/pause" class="pause {{ 'is-on' if paused else 'is-off' }}">
     {% if paused %}
       <span class="pause-state">Pause: <strong>ON</strong>. New tickets go to a person.</span>
@@ -128,6 +129,11 @@
 
         <details class="details">
           <summary>Details: audit log for this case ({{ events|length }} entries)</summary>
+          <h3>What the AI saw (masked)</h3>
+          {% if not model_called %}<p class="note">No model was called for this case. This is what it would have seen.</p>{% endif %}
+          <blockquote class="message masked">{{ masked }}</blockquote>
+          <p class="hint">Names and free-text addresses are not masked.</p>
+          <h3>Audit log</h3>
           <table>
             <thead><tr><th>Time (UTC)</th><th>Actor</th><th>Event</th><th>Payload</th><th>Config</th></tr></thead>
             <tbody>

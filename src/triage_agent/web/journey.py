@@ -75,6 +75,8 @@ def journey(case: Case, rows: list[AuditEvent]) -> list[Step]:
         classify = _step(3, "skipped: rule fired", SKIPPED)
     elif paused:
         classify = _step(3, "skipped: paused", SKIPPED)
+    elif first("mask_failed"):
+        classify = _step(3, "failed: masking failed, no model call", DONE)
     elif model_error:
         classify = _step(3, "failed: model error", DONE)
     elif classified:
@@ -82,6 +84,8 @@ def journey(case: Case, rows: list[AuditEvent]) -> list[Step]:
         text = f"{label} {conf:.2f}" if isinstance(conf, (int, float)) else str(label)
         if classified.payload.get("reason_code") == "low_confidence":
             text += " (low confidence)"
+        if classified.payload.get("provider"):
+            text += f" via {classified.payload['provider']}"
         classify = _step(3, text, DONE)
     else:
         classify = _step(3, "not run yet", PENDING)

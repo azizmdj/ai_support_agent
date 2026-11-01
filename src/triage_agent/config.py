@@ -74,12 +74,31 @@ class Settings(BaseModel):
     unclear_deadline: str = "PT24H"
 
 
+class ProviderConfig(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    id: str
+    kind: Literal["fake", "openai_compatible", "anthropic"]
+    base_url: str | None = None
+    model: str | None = None
+    api_key_env: str | None = None  # name of the environment variable; the key itself never sits in config
+
+
+class ModelsConfig(BaseModel):
+    providers: dict[str, ProviderConfig]
+    default_route: list[str]
+
+
+DEFAULT_MODELS = ModelsConfig(providers={"fake": ProviderConfig(id="fake", kind="fake")}, default_route=["fake"])
+
+
 class Config(BaseModel):
     classes: dict[str, ClassConfig]
     rules: list[Rule]
     settings: Settings
     templates: dict[tuple[str, str], Template]  # (template_id, lang) -> Template
     version: str
+    models: ModelsConfig = DEFAULT_MODELS
 
     def template(self, template_id: str, lang: str) -> Template | None:
         return self.templates.get((template_id, lang))
@@ -114,6 +133,42 @@ def _unclear_class(settings: Settings) -> ClassConfig:
 
 def _read_yaml(path: Path) -> object:
     return yaml.safe_load(normalize_newlines(path.read_text(encoding="utf-8")))
+
+
+def _load_models(path: Path, errors: list[str]) -> ModelsConfig:
+    """Parse models.yaml. Error messages name fields, never values (a value could be a key)."""
+    if not path.exists():
+        return DEFAULT_MODELS
+    try:
+        raw = _read_yaml(path) or {}
+        raw_providers = raw.get("providers") or []
+        route = list((raw.get("routing") or {}).get("default") or [])
+    except (AttributeError, TypeError, yaml.YAMLError):
+        errors.append("models.yaml: cannot parse")
+        return DEFAULT_MODELS
+    providers: dict[str, ProviderConfig] = {}
+    for i, item in enumerate(raw_providers):
+        name = item.get("id", f"#{i + 1}") if isinstance(item, dict) else f"#{i + 1}"
+        if isinstance(item, dict) and "api_key" in item:
+            errors.append(f"models.yaml: provider {name}: a literal api_key is not allowed; use api_key_env")
+            continue
+        try:
+            provider = ProviderConfig.model_validate(item)
+        except ValidationError as exc:
+            fields = sorted({".".join(str(x) for x in e["loc"]) or "?" for e in exc.errors(include_input=False)})
+            errors.append(f"models.yaml: provider {name}: invalid fields {fields}")
+            continue
+        if provider.id in providers:
+            errors.append(f"models.yaml: duplicate provider id {provider.id!r}")
+        if provider.kind != "fake" and not (provider.base_url and provider.model):
+            errors.append(f"models.yaml: provider {provider.id}: base_url and model are required")
+        providers[provider.id] = provider
+    if not route:
+        errors.append("models.yaml: routing.default must list at least one provider id")
+    for pid in route:
+        if pid not in providers:
+            errors.append(f"models.yaml: routing.default: unknown provider id {pid!r}")
+    return ModelsConfig(providers=providers, default_route=route)
 
 
 def load_config(pack_dir: Path) -> Config:
@@ -204,6 +259,8 @@ def load_config(pack_dir: Path) -> Config:
         if tid not in present_ids:
             errors.append(f"class {cname}: missing template file for {tid!r}")
 
+    models = _load_models(pack_dir / "models.yaml", errors)
+
     if errors:
         raise ConfigError(errors)
     return Config(
@@ -212,4 +269,5 @@ def load_config(pack_dir: Path) -> Config:
         settings=settings,
         templates=templates,
         version=config_version(pack_dir),
+        models=models,
     )
