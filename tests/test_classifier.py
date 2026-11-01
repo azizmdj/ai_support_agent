@@ -1,16 +1,14 @@
 import json
 import logging
 import re
-from pathlib import Path
 
 import httpx
 import pytest
 from conftest import edit_yaml, ticket
 
-from triage_agent import DEFAULT_PACK, REPO_ROOT
+from triage_agent import REPO_ROOT
 from triage_agent.config import UNCLEAR, ConfigError, load_config
-from triage_agent.llm import (MESSAGE_CLOSE, MESSAGE_OPEN, FakeLLM, FallbackChain, LLMClassifier,
-                              build_system_prompt, parse_result)
+from triage_agent.llm import MESSAGE_CLOSE, MESSAGE_OPEN, FallbackChain, LLMClassifier, build_system_prompt, parse_result
 from triage_agent.models import CaseState
 from triage_agent.providers import ProviderError
 from triage_agent.providers.registry import build_llm
@@ -357,12 +355,14 @@ def test_details_show_masked_message():
 def test_no_api_keys_in_the_repo():
     # sk-[A-Za-z0-9_-]{20,}, but only at the start of a token: "mcp-ask-questions-..." in a docs URL is not a key.
     pattern = re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}")
-    offenders = []
-    for folder in ("src", "pack", "tests", "docs"):
-        for path in (REPO_ROOT / folder).rglob("*"):
-            if path.is_file() and path.suffix in {".py", ".md", ".yaml", ".yml", ".jsonl", ".json", ".html", ".css", ".txt", ".toml"}:
-                if pattern.search(path.read_text(encoding="utf-8", errors="ignore")):
-                    offenders.append(str(path.relative_to(REPO_ROOT)))
+    text_suffixes = {".py", ".md", ".yaml", ".yml", ".jsonl", ".json", ".html", ".css", ".txt", ".toml"}
+    files = [REPO_ROOT / name for name in ("Dockerfile", "docker-compose.yml", "README.md")]
+    for folder in ("src", "pack", "tests", "docs", ".github"):
+        files += [p for p in (REPO_ROOT / folder).rglob("*") if p.is_file() and p.suffix in text_suffixes]
+    for name in ("Dockerfile", "docker-compose.yml", "README.md", ".github/workflows/ci.yml"):
+        assert (REPO_ROOT / name).is_file(), name  # the scan must really cover these
+    offenders = [str(p.relative_to(REPO_ROOT)) for p in files
+                 if pattern.search(p.read_text(encoding="utf-8", errors="ignore"))]
     assert offenders == []
 
 

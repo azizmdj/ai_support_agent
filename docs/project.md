@@ -9,8 +9,8 @@ Oct 31, 2026 · @Aziz M
 | 1 | Built | Core pipeline, rules, approval gate, audit log, config validator, offline demo |
 | 2 | Built | Reviewer console, journey trail, scenario buttons, pause switch, escalate, wrong class |
 | 3a | Built | Model providers (OpenAI-compatible and Anthropic adapters), PII masking, fallback chain, `classify` command |
-| 3b | Built | 100 synthetic tickets with seeded fake PII, the `eval` command and metrics including PII leak rate and injection resistance, a live run with gpt-4o-mini. 224 tests in total (223 passed, 1 expected failure) |
-| 4 | Planned | docker-compose, README, hosted demo |
+| 3b | Built | 100 synthetic tickets with seeded fake PII, the `eval` command and metrics including PII leak rate and injection resistance, a live run with gpt-4o-mini |
+| 4 | Built | Dockerfile, docker-compose, health endpoint, CI with ruff and pytest, full README. 232 tests in total (231 passed, 1 expected failure). The hosted demo is dropped (see Decisions) |
 
 ## Problem
 
@@ -54,7 +54,7 @@ The demo shows that a triage agent can be built, evaluated and deployed in a way
 - A plain Python package with SQLite that runs on a laptop; tests run with the network blocked
 - Real-model support behind swappable adapters, with PII masking before every real-model call
 - An evaluation suite with accuracy, safety and privacy numbers
-- docker-compose for a server or hosted demo (planned, phase 4)
+- A Docker image and docker-compose that run the console on one machine, and CI on every push
 
 **The demo does not claim**
 
@@ -82,7 +82,7 @@ Finom can take the code and change behavior through configuration files and smal
 | Add their own rules | `rules.yaml` holds keyword and regex rules with an action: `escalate` (straight to a person, no draft) or `route` (force the class, normal drafting). Rules run before the LLM and always win. When a rule fires, the LLM is not called. |
 | Connect their ticket system | A `TicketSource` interface with `fetch_new` and `send_reply`. We ship an in-memory mock; Finom writes a small adapter for the real system. |
 | Use their own models | A `TextModel` interface with one method, `complete(system, user)`, that returns text. Two adapters ship: `openai_compatible`, which also covers hosted gateways and local servers such as Ollama and vLLM through a base URL, and `anthropic`. Adapters only move text; the prompt, the parsing and the validation live once in the core (`LLMClassifier`). `pack/models.yaml` lists the providers and an ordered fallback chain, and `TRIAGE_PROVIDER` overrides the chain for one run. A deterministic fake provider is the default. All HTTP behavior is tested with mocked HTTP. The OpenAI adapter has also been run once against the live API; the Anthropic adapter has not been run live. |
-| Use their own data stores | A `CaseStore` interface: cases (`save`, `get`, `list`), tickets (`save_ticket`, `get_ticket`) and the pause flag (`is_paused`, `set_paused`). The default is SQLite. A Postgres swap (planned, later). Templates are plain files; pointing the template source at a bank's existing template system (planned, later). |
+| Use their own data stores | A `CaseStore` interface: cases (`save`, `get`, `list`), tickets (`save_ticket`, `get_ticket`) and the pause flag (`is_paused`, `set_paused`). The default is SQLite. A Postgres swap (not built). Templates are plain files; pointing the template source at a bank's existing template system (planned, later). |
 | Other markets and languages | Languages are template folders plus an AI-disclosure line per language in `settings.yaml`. Separate market folders (planned, later). |
 | Change the demo scenarios | `scenarios.yaml` in the pack holds the test messages behind the console's scenario buttons, two variants each. |
 
@@ -216,9 +216,9 @@ The design addresses DSGVO, the EU AI Act and DORA through concrete features, an
 
 | Regulation | Concern | How the design responds |
 | --- | --- | --- |
-| DSGVO | Personal data in messages | Synthetic data only; no message text in the audit log; PII masking before every real-model call, which fails closed (built; names and free-text addresses are not detected); EU hosting (planned, phase 4); a configurable retention period (planned, later) |
+| DSGVO | Personal data in messages | Synthetic data only; no message text in the audit log; PII masking before every real-model call, which fails closed (built; names and free-text addresses are not detected); EU hosting for a hosted setup (not built); a configurable retention period (planned, later) |
 | EU AI Act | Transparency and human oversight | Every draft carries an AI-disclosure line appended by code; the gate enforces human approval of every outbound reply; the use case avoids high-risk categories (no credit decisions, no employee scoring or monitoring); every decision is logged |
-| DORA | ICT third-party risk and resilience | The model sits behind a swappable interface; an ordered fallback chain of providers (built); a tested "model unavailable" path (rules still run, and provider errors go to a person with a `model_error` audit event); audit log built; incident log and health checks (planned, phase 4) |
+| DORA | ICT third-party risk and resilience | The model sits behind a swappable interface; an ordered fallback chain of providers (built); a tested "model unavailable" path (rules still run, and provider errors go to a person with a `model_error` audit event); audit log built; a `/health` endpoint and a container health check (built); an incident log (not built) |
 
 **Regulator note.** [Finom is licensed as an electronic money institution by De Nederlandsche Bank](https://finom.co/llms.txt), so DNB and Dutch rules are likely the main supervisory frame, with national rules such as BaFin's relevant for the German market. This should be confirmed with Finom's compliance team before the document describes any regulator in detail.
 
@@ -260,24 +260,26 @@ All personal data is fake, such as made-up names, fictional IBANs (some mistyped
 
 **Results**
 
-Provider `openai_main` with model gpt-4o-mini, threshold 0.7, run on 2026-11-02. Dev v2 and test share config version `cb16d991171f`.
+Provider `openai_main` with model gpt-4o-mini, threshold 0.7, run on 2026-11-02. Dev v1 ran on config version `a74e7a29655e`; dev v2 and test share `cb16d991171f`. The numbers come from the reports in `eval/results/`.
 
 | Metric | Dev v1 (62) | Dev v2 (62) | Test (38) |
 | --- | --- | --- | --- |
 | Class accuracy | 0.935 | 0.935 | 0.974 |
-| State accuracy | – | – | 1.000 |
-| Risky escalated rate | – | – | 1.000 |
-| Risky class recall | – | – | 1.000 |
+| State accuracy | 0.968 | 0.968 | 1.000 |
+| Risky escalated rate | 1.000 | 1.000 | 1.000 |
+| Risky class recall | 1.000 | 1.000 | 1.000 |
 | Risky tickets drafted | 0 | 0 | 0 |
 | Wrong draft rate | 0.105 | 0.083 | 0.056 |
 | Coverage | 1.000 | 0.973 | 0.783 |
-| Template accuracy | – | – | 0.952 |
-| `unclear` recall | – | 0.875 | – |
-| PII leak rate | 0 | 0 | 0 (14 of 19 PII tickets reached the model) |
+| Template accuracy | 0.919 | 0.892 | 0.952 |
+| `unclear` recall | 0.750 | 0.875 | 1.000 |
+| PII leak rate | 0 (28 of 32 PII tickets reached the model) | 0 (28 of 32) | 0 (14 of 19) |
 | Injection pass rate | 1.0 | 1.0 | 1.0 |
-| Replies sent | – | – | 0 |
+| Replies sent | 0 | 0 | 0 |
 
-0 of 17 dev and 0 of 11 test fraud and complaint tickets were drafted. On the test split the one class miss was a fee question labeled `general_question`. Dev v1 used the original prompt. Dev v2 followed one calibration change to the classifier prompt and to two class descriptions. A dash means the number was not recorded for that run.
+0 of 17 dev and 0 of 11 test fraud and complaint tickets were drafted. On the test split the one class miss was a fee question labeled `general_question`. Dev v1 used the original prompt. Dev v2 followed one calibration change to the classifier prompt and to two class descriptions.
+
+**Why test coverage is 0.783.** The test split has 23 in-scope, non-risky tickets. 18 of them expect a draft and 5 expect a person: 3 have a missing field (CB03, CB10, PT05) and 2 are in a language without templates (CB05 in Turkish, CB15 in French). All 18 got a draft, so coverage is 18 of 23. State accuracy is 1.000, so these 5 ended with a person as expected.
 
 **Findings**
 
@@ -303,19 +305,24 @@ Finom can add its own labeled tickets, rerun `eval`, and see accuracy before tru
 
 ## Deployment and operations
 
-The core is a plain Python package with SQLite. It runs on a laptop with no network, and Finom can import it into its own services.
+The core is a plain Python package with SQLite. It runs on a laptop with no network, in a container, and Finom can import it into its own services.
 
-- **Packaging:** an installable Python package (`pyproject.toml`, managed with `uv`). docker-compose, with settings and secrets from environment variables (planned, phase 4).
+- **Packaging:** an installable Python package (`pyproject.toml`, managed with `uv`).
+- **Docker:** a `Dockerfile` on `python:3.13-slim` installs the locked dependencies with `uv sync --frozen --no-dev` in their own layer, then copies the code, the pack, the eval set and the console fixture tickets. It runs as a non-root user, exposes port 8000 and starts `serve --host 0.0.0.0`. A `HEALTHCHECK` calls `/health` with Python's `urllib`. `.dockerignore` keeps `.git`, `.venv`, caches, `.env` files, databases and `eval/results` out of the image.
+- **docker-compose:** one service. The port is bound to `127.0.0.1:8000` only. `TRIAGE_DB=/data/triage.db` sits on a named volume, so cases survive a restart. `TRIAGE_PROVIDER` defaults to `fake`. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are passed through from the shell by name; no value is in any file. A commented-out line mounts `./pack` read-only, so classes and templates can be edited on the host; the config is read at startup, so a `docker compose restart` applies an edit.
+- **Health endpoint:** `GET /health` returns `{"status": "ok", "models": [provider ids]}`. It changes no state and shows no secrets.
+- **Host and port:** `serve --host` (default `127.0.0.1`) and `--port` (default 8000). The container uses `--host 0.0.0.0`.
+- **CI:** `.github/workflows/ci.yml` runs on every push to `main` and on pull requests: `uv sync --frozen`, `uv run ruff check .` and `uv run pytest` on Python 3.13. It uses no secrets, so no live model is called.
 - **Model settings:** providers, base URLs, model names and the fallback chain live in `pack/models.yaml`. `TRIAGE_PROVIDER` (comma-separated provider ids) overrides the chain for one run. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` hold the keys; the config only names the variable. Keys are never logged, audited or shown.
 - **Console settings:** `TRIAGE_DB` sets the SQLite file (default: in memory, so data is lost on restart), and `TRIAGE_REVIEWER` sets the reviewer id (default `demo-reviewer`). The console binds to 127.0.0.1:8000. There is no authentication beyond this one fixed reviewer id.
-- **Hosting for the public demo:** an EU provider, so no data leaves the EU (planned, phase 4).
-- **Observability:** the audit log of every classification, template choice, draft, edit, approval and send. Structured logs (planned, phase 4). No external tracing service is required.
+- **Hosted public demo:** (not built). See Decisions.
+- **Observability:** the audit log of every classification, template choice, draft, edit, approval and send. Structured logs (not built). No external tracing service is required.
 - **Failure handling:** if a provider times out, returns an HTTP error or gives invalid output, the next provider in the chain is tried. If all fail, rules still run and the case goes to a person with a `model_error` audit event. If masking fails, no provider is called and a `mask_failed` row is written.
 
 **Running on Finom's own infrastructure**
 
 - Finom imports the package and sets a base URL for its own model, local or hosted, in `pack/models.yaml`.
-- Storage is local SQLite.
+- Storage is local SQLite, in a file set by `TRIAGE_DB` or on the compose volume. A Postgres store and an on-premise deployment profile: (not built).
 - Tests run with the network blocked: any socket use fails, so a test that tries to reach the internet fails.
 
 When the model runs inside the bank's network, the data does not leave it, and PII masking is mainly needed for hosted-model setups.
@@ -329,10 +336,10 @@ The plan is the smallest build that shows flexibility, integrability, banking fi
 | What it must show | What the build includes |
 | --- | --- |
 | Flexibility | `taxonomy.yaml`, `rules.yaml`, `settings.yaml` and template files; a new class needs no code (built) |
-| Integrability | Adapter interfaces for ticket source, model and case store, with mock versions and SQLite storage (built); OpenAI-compatible and Anthropic adapters for hosted and local models, with an ordered fallback chain in `pack/models.yaml` (built); a Postgres swap (planned, later) |
+| Integrability | Adapter interfaces for ticket source, model and case store, with mock versions and SQLite storage (built); OpenAI-compatible and Anthropic adapters for hosted and local models, with an ordered fallback chain in `pack/models.yaml` (built); a Postgres swap (not built) |
 | Banking fit | Fraud and complaint escalation to a person, approved templates only, an audit log with reason and config version (built) |
 | Safety | Approval gate, locked safety rails, a global pause switch, PII masking that fails closed, the PII leak rate and evaluation numbers (built) |
-| Deployment | A Python package that runs on a laptop (built); docker-compose and a hosted demo (planned, phase 4) |
+| Deployment | A Python package that runs on a laptop, a Docker image, docker-compose and CI (built); a hosted demo and a Kubernetes manifest (not built) |
 
 **Repo structure**
 
@@ -347,7 +354,9 @@ tests/                       unit, adapter, masking and console tests, fixture t
 README.md
 pyproject.toml
 eval/                        tickets.jsonl (100 tickets), baseline.json (fake-provider baseline), results/ (reports)
-deploy/                      Dockerfile, docker-compose (planned, phase 4)
+Dockerfile                   container image for the console
+docker-compose.yml           one service, localhost port, named volume for the database
+.github/workflows/ci.yml     ruff and pytest on every push and pull request
 ```
 
 The console uses plain HTML forms rendered on the server: no JavaScript, no CDN and no external fonts. Every GET only reads; every action is a POST.
@@ -359,15 +368,15 @@ The console uses plain HTML forms rendered on the server: no JavaScript, no CDN 
 3. **Models and evaluation,** in two parts.
    - 3a: model adapters, PII masking, the fallback chain and the `classify` command. (built, phase 3a)
    - 3b: 100 synthetic tickets with seeded fake PII, the evaluation suite with PII leak rate and injection resistance, and a live run with gpt-4o-mini. (built, phase 3b)
-4. **Deployment and README:** docker-compose and the hosted demo; architecture, how Finom adapts it, and what is needed before production. (planned, phase 4)
+4. **Packaging and README:** Dockerfile, docker-compose, health endpoint, CI, and a README with the flowchart, how Finom adapts it, results and limits. (built, phase 4) The hosted demo is dropped.
 
 Keep Finom-specific wording in the pack files and not in the core, so a second pack is a copy. One exception today: the fake LLM's keyword list lives in the core.
 
 **Storage and integrations**
 
 - The default is basic: SQLite for cases, tickets, the pause flag and the audit log, and plain template files loaded by id.
-- Both sit behind interfaces. A Postgres case store and a template source that points at a bank's existing template system (planned, later).
-- A contract test that runs the same suite on SQLite and Postgres (planned, later).
+- Both sit behind interfaces. A Postgres case store (not built). A template source that points at a bank's existing template system (planned, later).
+- A contract test that runs the same suite on SQLite and Postgres (not built).
 - Messages are processed as they arrive. There is no queue and no search index, because the class decides the template.
 
 **Pipeline**
@@ -398,7 +407,8 @@ The steps map directly to graph nodes if Finom uses an orchestrator.
 
 **Deployment**
 
-- **Hosted demo (planned, phase 4):** docker-compose on one small EU server (for example Hetzner in Germany or Finland) with TLS through a reverse proxy. It uses a hosted model API, an access code for the people the link is shared with, and a low spend limit on the API key.
+- **Local container:** `docker compose up --build` runs the console on `127.0.0.1:8000`, described under Deployment and operations.
+- **Hosted demo (not built):** a public server with TLS, an access code and a spend limit. Dropped; see Decisions.
 - **Finom's own infrastructure:** import the package and set the model base URL, described under Deployment and operations.
 
 **Local testing**
@@ -410,11 +420,11 @@ The whole system runs on a laptop with no API keys. The shipped routing is the f
 - Adapter tests use httpx's mock transport, so no test makes a real HTTP call.
 - Both the console and the demo load the fixture tickets and templates into SQLite, in memory by default.
 - Console tests use FastAPI's in-process test client, so they also run with the network blocked.
-- `docker compose up` for the API and console (planned, phase 4).
+- `docker compose up --build` builds the image and starts the console; `http://127.0.0.1:8000/health` shows whether it is up and which models are active.
 
 **Mandatory QA tests**
 
-These will run in CI on every push and block merging when they fail (CI planned, phase 4). Today they run with `uv run pytest`.
+These run in CI on every push to `main` and on every pull request, and locally with `uv run pytest`.
 
 | Test | What it proves | State |
 | --- | --- | --- |
@@ -425,11 +435,12 @@ These will run in CI on every push and block merging when they fail (CI planned,
 | Prompt-injection set | Hostile messages change neither the class nor the actions taken | Built: unit tests plus 8 injection tickets in the eval set |
 | Evaluation regression | The fake-provider run stays at or above `eval/baseline.json`; leak rate 0, no reply sent and injection pass rate 1.0 are enforced | Built |
 | Model adapters | Request URL, headers and body, response parsing, and HTTP errors, timeouts and malformed bodies, for both adapters over mocked HTTP | Built |
-| Secret scan | No API-key-shaped string (`sk-…`) in `src/`, `pack/`, `tests/` or `docs/`, and `.env` files are git-ignored | Built |
+| Secret scan | No API-key-shaped string (`sk-…`) in `src/`, `pack/`, `tests/`, `docs/`, `.github/`, the `Dockerfile`, `docker-compose.yml` or the README, and `.env` files are git-ignored | Built |
 | Pause switch | While paused, fraud still escalates, everything else goes to a person, and the model is not called | Built |
+| Packaging | `/health` returns ok and the provider ids without state change or secrets; compose passes the key variables by name only; the Dockerfile copies only existing paths | Built |
 | Reviewer console | Scenarios land in the right lane; approve, edit, stale draft, escalate and wrong class behave and log correctly; GET never changes state; customer text is escaped | Built |
 
-Shorter unit tests cover config validation, template filling (a missing field or language blocks the draft), audit-log fields and config version, the model-down path, invalid model output, deadlines, the journey trail and the no-network guard. Storage tests on Postgres are planned. A linter in CI (planned, phase 4). A run with the real model on demand is the `classify` command.
+Shorter unit tests cover config validation, template filling (a missing field or language blocks the draft), audit-log fields and config version, the model-down path, invalid model output, deadlines, the journey trail and the no-network guard. Storage tests on Postgres are (not built). CI also runs the ruff linter. A run with the real model on demand is the `classify` command.
 
 **Cautions**
 
@@ -449,6 +460,7 @@ Shorter unit tests cover config validation, template filling (a missing field or
 - **The Anthropic adapter sends no `temperature`,** because API version `2026-10-21` rejects sampling parameters. It is tested with mocked HTTP only.
 - **Coverage counts missing-field and other-language tickets,** so it cannot reach 1.0. State accuracy shows whether tickets ended where expected.
 - **The baseline comes from the fake provider.** Tests compare against it and never write it; `eval --write-baseline` updates it on purpose.
+- **The hosted demo is dropped.** A public demo needs hosting, TLS, an access code and spend limits. A recorded demo plus docker-compose serve the pitch better.
 - **Dev for tuning, test once.** Prompt and config changes are judged on the dev split; the test split is run once after dev is settled.
 
 ## Before production

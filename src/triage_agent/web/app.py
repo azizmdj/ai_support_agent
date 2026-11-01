@@ -26,9 +26,9 @@ from ..config import UNCLEAR, load_config
 from ..gate import Gate, GateError
 from ..llm import FallbackChain, LLMProvider
 from ..masking import mask
-from ..providers.registry import build_llm
 from ..models import Case, CaseState, Ticket, normalize_newlines
 from ..pipeline import Pipeline
+from ..providers.registry import build_llm
 from ..store import CaseNotFound, SQLiteCaseStore, connect
 from ..ticket_source import MockTicketSource, load_tickets
 from .journey import generic_journey, journey
@@ -98,6 +98,7 @@ def create_app(
     source = MockTicketSource([])
     llm = llm or build_llm(config)  # fails at startup with a clear message if a key variable is unset
     model_label = llm.describe() if isinstance(llm, FallbackChain) else type(llm).__name__
+    model_ids = llm.ids if isinstance(llm, FallbackChain) else [type(llm).__name__]
     pipeline = Pipeline(config, llm, store, audit)
     gate = Gate(store, audit, source, config)
     reviewer = reviewer_id or os.environ.get("TRIAGE_REVIEWER", "demo-reviewer")
@@ -177,6 +178,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="case not found") from None
 
     # --- Pages (read only) ------------------------------------------------------------------------
+    @app.get("/health")
+    def health():
+        """Liveness check for containers: provider ids only, no state change, no secrets."""
+        return {"status": "ok", "models": model_ids}
+
     @app.get("/", response_class=HTMLResponse)
     def index(msg: str | None = None):
         with lock:
