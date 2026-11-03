@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import httpx
 
-from . import TIMEOUT_SECONDS, ProviderError
+from . import ProviderError
+
+# Used when models.yaml sets no value for a provider of this kind.
+DEFAULTS = {"temperature": 0.0, "max_tokens": 300, "timeout_seconds": 20.0}
 
 
 class OpenAICompatibleModel:
@@ -13,21 +16,24 @@ class OpenAICompatibleModel:
         base_url: str,
         model: str,
         api_key: str | None = None,
-        max_tokens: int = 300,
+        temperature: float = DEFAULTS["temperature"],
+        max_tokens: int = DEFAULTS["max_tokens"],
+        timeout_seconds: float = DEFAULTS["timeout_seconds"],
         transport: httpx.BaseTransport | None = None,
     ):
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.model = model
+        self.temperature = temperature
         self.max_tokens = max_tokens
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        self._client = httpx.Client(headers=headers, timeout=TIMEOUT_SECONDS, transport=transport)
+        self._client = httpx.Client(headers=headers, timeout=timeout_seconds, transport=transport)
 
     def complete(self, system: str, user: str) -> str:
         body = {
             "model": self.model,
-            "temperature": 0,
+            "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         }

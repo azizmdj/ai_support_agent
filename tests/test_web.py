@@ -14,6 +14,7 @@ from triage_agent.models import CaseState
 from triage_agent.pipeline import Pipeline
 from triage_agent.store import SQLiteCaseStore, connect
 from triage_agent.web.app import create_app, relative_due
+from triage_agent.web.journey import STEPS
 
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
 REVIEWER = "rev-test"
@@ -87,9 +88,16 @@ def test_seed_shifts_fixtures_so_newest_is_now(console):
 
 def test_page_renders_lanes_and_header(console):
     html = console.client.get("/").text
-    assert "Unofficial demo, synthetic data" in html
-    assert REVIEWER in html
-    assert "Pause: <strong>OFF</strong>" in html
+    header = html.split("<header", 1)[1].split("</header>", 1)[0]
+    assert "Unofficial demo, synthetic data" in header
+    assert '<a href="/" aria-current="page">Review</a>' in header and '<a href="/system" >System</a>' in header
+    assert 'href="/system#settings">Model: FakeLLM</a>' in header
+    assert f"Config {console.app.state.config.version}" in header
+    assert "Pause: <strong>OFF</strong>" in header
+    assert header.count("<button") == 1  # the pause switch is the only control in the header
+    assert "Send a test message:" in html
+    for label in ("Routine question", "Fraud report", "Complaint", "Hostile message"):
+        assert f">{label}</button>" in html
     for title in ("Urgent", "Ready to approve", "Needs a person"):
         assert title in html
     assert "Urgent <span class=\"count\">(5)</span>" in html
@@ -102,7 +110,7 @@ def test_page_renders_lanes_and_header(console):
 
 def test_get_requests_never_change_state(console):
     before = console.audit_count()
-    pages = ["/", "/?msg=sent", "/static/style.css"] + [f"/cases/{c.id}" for c in console.store.list()]
+    pages = ["/", "/?msg=sent", "/system", "/health", "/static/style.css"] + [f"/cases/{c.id}" for c in console.store.list()]
     for url in pages:
         assert console.client.get(url).status_code == 200, url
     for action in ("approve", "escalate", "take", "class"):
@@ -113,12 +121,42 @@ def test_get_requests_never_change_state(console):
     assert console.sent == []
 
 
-def test_customer_message_is_escaped(console):
-    pipeline = console.app.state.pipeline
-    case = pipeline.process(ticket("<script>alert(1)</script> fees?", id="XSS"))
+def test_message_reason_and_payload_text_are_escaped(console):
+    case = console.app.state.pipeline.process(ticket("<script>alert(1)</script> fees?", id="XSS"))
+    case.reason = "<script>alert(2)</script>"
+    console.store.save(case)
+    console.audit.write(case.id, "pipeline", "drafted", template_id="<b>tpl</b>")
     html = console.client.get(f"/cases/{case.id}").text
-    assert "<script>alert(1)</script>" not in html
-    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    for raw in ("<script>alert(1)</script>", "<script>alert(2)</script>", "<b>tpl</b>"):
+        assert raw not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html and "&lt;b&gt;tpl&lt;/b&gt;" in html
+
+
+@pytest.mark.parametrize("state,primary", [
+    ("drafted", "Approve and send"), ("needs_person", "Set class and draft"), ("escalated", "Take case"),
+])
+def test_each_card_has_exactly_one_primary_button(console, state, primary):
+    case = next(c for c in console.store.list() if c.state.value == state)
+    html = console.client.get(f"/cases/{case.id}").text
+    assert html.count('class="primary"') == 1
+    assert f'<button type="submit" class="primary">{primary}</button>' in html
+    secondary = html.split("<summary>Something wrong?</summary>", 1)
+    if state == "escalated":
+        assert len(secondary) == 1  # no secondary actions on an escalated case
+    else:
+        assert "Escalate to a person" in secondary[1].split("</details>", 1)[0]
+
+
+def test_trail_links_to_system_anchors(console):
+    html = console.client.get("/cases/case-T01").text
+    for name, anchor, _, _ in STEPS:
+        assert f'href="/system#{anchor}">' in html and f". {name}</a>" in html
+    for actor in ("Customer", "Code", "AI", "Reviewer"):
+        assert f'<span class="actor">{actor}</span>' in html
+    card = html.split('<article class="card', 1)[1]
+    assert card.index("Journey of this ticket") < card.index("Customer message")
+    details = card.split("Details: what each step saw and produced", 1)[1]
+    assert "<summary>Audit log (" in details  # raw rows stay, nested and collapsed
 
 
 def test_relative_due():
@@ -323,6 +361,15 @@ def test_empty_queue_page(empty_console):
     html = empty_console.client.get("/").text
     assert "Queue is empty." in html and "Try a scenario button above." in html
     assert "Ready to approve <span class=\"count\">(0)</span>" in html
+    guide = html.split('<ol class="guide">', 1)[1].split("</ol>", 1)[0]
+    assert [line.strip() for line in re.findall(r"<li>(.*?)</li>", guide)] == [
+        "Send a test message above.",
+        "Review the case: the trail shows what happened, step by step.",
+        "Open System to see the rules, settings and the reasoning.",
+    ]
+    assert "How a ticket moves" in html and html.count("Status: <strong>Pending</strong>") == 6
+    for _, _, _, desc in STEPS:
+        assert desc in html
 
 
 # --- Static safety checks ----------------------------------------------------------------------
@@ -333,7 +380,9 @@ def test_web_layer_never_calls_send_reply():
             assert "send_reply" not in path.read_text(encoding="utf-8"), path
 
 
-def test_jinja_autoescape_is_on(console):
-    from triage_agent.web import app as web_app
-    source = Path(web_app.__file__).read_text(encoding="utf-8")
-    assert "autoescape=True" in source
+def test_entry_hint_with_a_non_empty_queue(console):
+    html = console.client.get("/").text
+    assert console.store.list()
+    hint = html.split("</header>", 1)[1].split('<p class="entry">', 1)[1].split("</p>", 1)[0]
+    assert hint.startswith("Pick a ticket on the left or send a test message.")
+    assert '<a href="/system">System tab</a>' in hint

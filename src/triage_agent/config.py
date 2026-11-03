@@ -63,7 +63,7 @@ class Rule(BaseModel):
     id: str
     patterns: list[str]  # keyword (word-start match) or "re:<regex>" on normalized text
     languages: list[str] | None = None
-    action: Literal["escalate", "route"]
+    action: Literal["escalate"] = "escalate"  # a rule always sends the ticket straight to a person
     force_class: str
 
 
@@ -82,6 +82,10 @@ class ProviderConfig(BaseModel):
     base_url: str | None = None
     model: str | None = None
     api_key_env: str | None = None  # name of the environment variable; the key itself never sits in config
+    # Optional hyperparameters; unset means the adapter default (see providers/registry.py).
+    temperature: float | None = Field(None, ge=0, le=2)  # openai_compatible only
+    max_tokens: int | None = Field(None, ge=1, le=4096)
+    timeout_seconds: float | None = Field(None, ge=1, le=120)
 
 
 class ModelsConfig(BaseModel):
@@ -160,6 +164,8 @@ def _load_models(path: Path, errors: list[str]) -> ModelsConfig:
             continue
         if provider.id in providers:
             errors.append(f"models.yaml: duplicate provider id {provider.id!r}")
+        if provider.kind == "anthropic" and provider.temperature is not None:
+            errors.append(f"models.yaml: provider {provider.id}: temperature is not supported for kind anthropic")
         if provider.kind != "fake" and not (provider.base_url and provider.model):
             errors.append(f"models.yaml: provider {provider.id}: base_url and model are required")
         providers[provider.id] = provider
@@ -217,8 +223,6 @@ def load_config(pack_dir: Path) -> Config:
         target = classes.get(rule.force_class)
         if target is None or rule.force_class == UNCLEAR:
             errors.append(f"rule {rule.id}: unknown class {rule.force_class!r}")
-        elif target.locked and rule.action != "escalate":
-            errors.append(f"rule {rule.id}: locked class {target.name} only allows action 'escalate'")
         for pattern in rule.patterns:
             if pattern.startswith("re:"):
                 try:

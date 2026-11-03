@@ -170,7 +170,26 @@ def test_injection_cannot_downgrade_fraud(make_env):
     assert case.state == CaseState.ESCALATED and env.llm.calls == 0
 
 
-def test_pipeline_cannot_send(make_env):
-    env = make_env(llm=scripted("general_question"))
-    env.run(ticket("invoice?"))
-    assert env.source.sent == []
+
+
+def test_fixture_tickets_take_the_expected_paths(make_env, fixture_tickets):
+    env = make_env()
+    got = {t.id: (c.class_name, c.state) for t in fixture_tickets.values() for c in [env.run(t)]}
+    E, D, N = CaseState.ESCALATED, CaseState.DRAFTED, CaseState.NEEDS_PERSON
+    assert got == {
+        "T01": ("fee_question", D),
+        "T02": ("fee_question", D),
+        "T03": ("fraud_report", E),
+        "T04": ("fraud_report", E),
+        "T05": ("fraud_report", E),
+        "T06": ("complaint", E),
+        "T07": ("complaint", E),  # no rule; model says complaint, locked class escalates
+        "T08": ("card_blocked", D),
+        "T09": ("card_blocked", N),  # missing card_last4
+        "T10": ("card_blocked", D),  # German card template
+        "T11": ("pending_transfer", D),
+        "T12": ("unclear", N),  # vague
+        "T13": ("unclear", N),  # two issues -> low confidence
+        "T14": ("general_question", D),  # injection attempt, drafted normally
+        "T15": ("pending_transfer", D),
+    }

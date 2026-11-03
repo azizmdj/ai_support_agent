@@ -1,4 +1,4 @@
-"""LLM provider interface plus a deterministic fake for tests and the offline demo."""
+"""LLM provider interface, the classifier for real models, the fallback chain, and a deterministic offline fake."""
 
 from __future__ import annotations
 

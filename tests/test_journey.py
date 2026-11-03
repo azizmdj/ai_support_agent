@@ -1,6 +1,4 @@
-import pytest
 from conftest import ticket
-from test_web import Console
 
 from triage_agent.llm import FakeLLM
 from triage_agent.models import ClassifierResult
@@ -15,8 +13,8 @@ def scripted(label, confidence=0.95, subtype=None):
 
 def trail(env, case_id):
     steps = journey(env.store.get(case_id), env.audit.events(case_id))
-    assert [s.name for s in steps] == [s[0] for s in STEPS]
-    assert [s.actor for s in steps] == ["Customer", "Code", "AI", "Code", "Reviewer", "Customer"]
+    assert [s.name for s in steps] == [name for name, *_ in STEPS]
+    assert [s.actor for s in steps] == ["Customer", "Code", "AI", "Code", "Reviewer", "Code"]
     return [(s.result, s.status) for s in steps]
 
 
@@ -51,7 +49,7 @@ def test_needs_person_with_missing_field(make_env):
     env = make_env(llm=scripted("card_blocked", subtype="lost_or_stolen"))
     case = env.run(ticket("lost my card", metadata={"customer_name": "Sofia Braun"}))
     steps = trail(env, case.id)
-    assert steps[2] == ("card_blocked 0.95", DONE)
+    assert steps[2] == ("card_blocked 0.95; subtype lost_or_stolen", DONE)
     assert steps[3] == ("no draft: missing card_last4", SKIPPED)
     assert steps[4] == ("waiting: pick a class or escalate", TURN)
     assert steps[5] == ("not sent yet", PENDING)
@@ -164,54 +162,24 @@ def test_generic_journey():
     assert all(s.result for s in steps)
 
 
-# --- Rendering -----------------------------------------------------------------------------------
-@pytest.fixture
-def console():
-    return Console()
+def test_steps_carry_input_and_config(make_env):
+    from triage_agent.llm import FallbackChain
+    from triage_agent.web.journey import Context
 
+    ctx = Context(threshold=0.7, rule_count=3, providers={"fake": "fake: keyword fake (offline)"},
+                  chain="fake", masked="Fees? IBAN <IBAN_1>", reviewer="rev-1")
+    env = make_env(llm=FallbackChain([("fake", FakeLLM(script=[ClassifierResult(label="fee_question", confidence=0.9)]))]))
+    case = env.run(ticket("Which fees apply?"))
+    steps = {s.name: s for s in journey(env.store.get(case.id), env.audit.events(case.id), ctx)}
+    assert steps["Rules"].config == "rules.yaml (3 rules)"
+    assert steps["Classify"].input == "the masked message: Fees? IBAN <IBAN_1>"
+    assert steps["Classify"].result == "fee_question 0.90 via fake"
+    assert steps["Classify"].config == "fake: keyword fake (offline), threshold 0.7"
+    assert steps["Template"].input == "class fee_question, language en, ticket fields"
+    assert steps["Review"].input.startswith("draft ") and steps["Review"].config == "approval gate, reviewer rev-1"
+    assert steps["Reply"].config == "AI-disclosure line (en) from settings.yaml"
 
-def test_card_shows_six_steps_and_four_actors(console):
-    html = console.client.get("/cases/case-T01").text
-    for i, (name, _, _) in enumerate(STEPS, 1):
-        assert f'<span class="step-name">{i}. {name}</span>' in html
-    for actor in ("Customer", "Code", "AI", "Reviewer"):
-        assert f'">{actor}</span>' in html
-    assert "Status: <strong>Your turn</strong>" in html
-    # The trail sits at the top of the card, above the customer message.
-    card = html.split('<article class="card', 1)[1]
-    assert card.index("Journey of this ticket") < card.index("Customer message")
-
-
-def test_header_has_test_message_label_and_plain_buttons(console):
-    html = console.client.get("/").text
-    assert "Send a test message:" in html
-    assert "Unofficial demo, synthetic data" in html
-    for label in ("Routine question", "Fraud report", "Complaint", "Hostile message"):
-        assert f">{label}</button>" in html
-
-
-def test_generic_strip_on_empty_queue():
-    html = Console(seed=False).client.get("/").text
-    assert "Queue is empty." in html and "Send a test message above." in html
-    assert "How a ticket moves" in html
-    assert html.count("Status: <strong>Pending</strong>") == 6
-    for _, _, desc in STEPS:
-        assert desc.replace("'", "&#39;") in html
-
-
-def test_get_with_trail_leaves_audit_unchanged(console):
-    before = console.audit_count()
-    for case in console.store.list():
-        assert console.client.get(f"/cases/{case.id}").status_code == 200
-    console.client.get("/")
-    assert console.audit_count() == before
-
-
-def test_reason_and_payload_text_are_escaped(console):
-    case = console.store.get("case-T01")
-    case.reason = "<script>alert(2)</script>"
-    console.store.save(case)
-    console.audit.write(case.id, "pipeline", "drafted", template_id="<b>tpl</b>")
-    html = console.client.get(f"/cases/{case.id}").text
-    assert "<script>alert(2)</script>" not in html and "&lt;script&gt;alert(2)&lt;/script&gt;" in html
-    assert "<b>tpl</b>" not in html and "&lt;b&gt;tpl&lt;/b&gt;" in html
+    fraud = env.run(ticket("This is fraud", id="F1"))
+    steps = {s.name: s for s in journey(env.store.get(fraud.id), env.audit.events(fraud.id), ctx)}
+    assert (steps["Classify"].input, steps["Classify"].status) == ("nothing: no model call", SKIPPED)
+    assert steps["Reply"].input == "-" and steps["Review"].input == "the case, without a draft"

@@ -4,6 +4,24 @@ An unofficial pitch demo of a support triage agent for a bank, built on syntheti
 
 Code rules run first, a model only classifies, replies come from approved templates, and a person approves every reply before it is sent.
 
+## Quickstart
+
+1. `docker compose up --build`
+2. Open http://127.0.0.1:8000
+3. Click a "Send a test message" button and follow the trail on the card.
+
+Without Docker, with [uv](https://docs.astral.sh/uv/) (offline, fake model, no keys):
+
+```
+uv sync
+uv run python -m triage_agent serve             # console on http://127.0.0.1:8000
+uv run python -m triage_agent eval --split dev  # evaluation set, report in eval/results/
+uv run python -m triage_agent classify "<text>" # masked text and model result
+uv run pytest
+```
+
+Real model: set `$env:OPENAI_API_KEY` and `$env:TRIAGE_PROVIDER = "openai_main"` in the terminal, then start as above.
+
 ```mermaid
 flowchart LR
   M[Customer message] --> R["Rules · Code"]
@@ -22,67 +40,41 @@ flowchart LR
   V -- approve --> G["Approval gate · Code"] --> S[Reply sent]
 ```
 
-## Quickstart
-
-With [uv](https://docs.astral.sh/uv/), offline (fake model, no keys):
-
-```
-uv sync
-uv run pytest
-uv run python -m triage_agent serve             # reviewer console on http://127.0.0.1:8000
-uv run python -m triage_agent demo              # same flow on the command line
-uv run python -m triage_agent classify "<text>" # masked text and model result
-uv run python -m triage_agent eval --split dev  # evaluation set, writes a report to eval/results/
-```
-
-With Docker: `docker compose up --build`, then open http://127.0.0.1:8000 (health check: http://127.0.0.1:8000/health).
-
-With a real model, set the key in your terminal only (PowerShell shown; it is never written to a file):
-
-```
-$env:OPENAI_API_KEY = Read-Host -Prompt "OpenAI API key"
-$env:TRIAGE_PROVIDER = "openai_main"
-uv run python -m triage_agent serve      # or: docker compose up --build
-```
+**Where to look:** the System tab (http://127.0.0.1:8000/system) shows the flow, the active settings and model chain, the classes and rules, and why each control exists. It is read-only.
 
 ## How Finom adapts it
 
 | What to change | Where |
 | --- | --- |
-| Message classes, priorities, teams, deadlines, locked classes | `pack/taxonomy.yaml` |
-| Keyword and regex rules | `pack/rules.yaml` |
+| Classes, priorities, teams, deadlines, locked classes | `pack/taxonomy.yaml` |
+| Keyword and regex rules (they always escalate) | `pack/rules.yaml` |
 | Approved reply templates, per language | `pack/templates/<lang>/<id>.md` |
-| Confidence threshold, allowed template fields, AI-disclosure line | `pack/settings.yaml` |
-| Models and fallback order (no code change) | `pack/models.yaml`, or `TRIAGE_PROVIDER` |
-| A model API that is not OpenAI-compatible or Anthropic | a small `TextModel` adapter in `src/triage_agent/providers/` |
+| Threshold, allowed template fields, AI-disclosure line | `pack/settings.yaml` |
+| Models, fallback order, temperature, max_tokens, timeout | `pack/models.yaml`, or `TRIAGE_PROVIDER` |
+| Another model API | a `TextModel` adapter in `src/triage_agent/providers/` |
 | Ticket system | a `TicketSource` adapter (`src/triage_agent/ticket_source.py`) |
 | Case storage (default SQLite) | a `CaseStore` adapter (`src/triage_agent/store.py`) |
-| Console test messages | `pack/scenarios.yaml` |
-| Own labeled tickets for evaluation | `eval/tickets.jsonl` |
+| Test messages, eval tickets | `pack/scenarios.yaml`, `eval/tickets.jsonl` |
 
-The config is validated on every start; a broken pack is rejected with a list of errors.
+The config is validated on every start; restart and check that the config version on the System page changed.
 
 ## Results
 
-gpt-4o-mini on the 38 held-out test tickets: 0 of 11 fraud and complaint tickets drafted, 0 PII leaks, 37 of 38 classes correct. 100 synthetic tickets written by an LLM; see [docs/project.md](docs/project.md) for the full results and limits.
+gpt-4o-mini on the 38 held-out test tickets: 0 of 11 fraud and complaint tickets drafted, 0 PII leaks, 37 of 38 classes correct. 100 synthetic tickets written by an LLM; see [docs/project.md](docs/project.md) for limits.
 
 - The tickets are synthetic; real messages will be messier.
-- The sets are small: one ticket moves a test metric by 2.6 points.
+- The sets are small: with 0 failures in 11 tickets, the true rate could still be up to about 3/11.
 - Only structured personal data (IBAN, card, email, phone) is masked and measured; names and addresses are not.
-- The model's self-reported confidence is uncalibrated; safety comes from rules, locked classes and the approval gate.
+- The model's confidence is uncalibrated; safety comes from rules, locked classes and the approval gate.
 
-## Before production
-
-See the checklist under "Before production" in [docs/project.md](docs/project.md).
-
-Demo video: (link to be added)
+Before production: see the checklist in [docs/project.md](docs/project.md). Demo video: (link to be added)
 
 ## Repo layout
 
 ```
 src/triage_agent/   pipeline, rules, approval gate, audit log, masking, evaluation, CLI
   providers/        model adapters (OpenAI-compatible, Anthropic)
-  web/              reviewer console (server-rendered, no JavaScript)
+  web/              console: Review and System pages (server-rendered, no JavaScript)
 pack/               classes, rules, settings, templates, scenarios, models
 eval/               100 evaluation tickets, baseline, reports
 tests/              tests and the 15 console fixture tickets

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import httpx
 
-from . import TIMEOUT_SECONDS, ProviderError
+from . import ProviderError
+
+# Used when models.yaml sets no value. No temperature: API version 2026-10-21 rejects it.
+# Current models always think, so max_tokens leaves room for thinking plus a short JSON answer.
+DEFAULTS = {"temperature": None, "max_tokens": 1024, "timeout_seconds": 20.0}
 
 API_VERSION = "2026-10-21"
 
@@ -15,15 +19,15 @@ class AnthropicModel:
         base_url: str,
         model: str,
         api_key: str,
-        max_tokens: int = 1024,
+        max_tokens: int = DEFAULTS["max_tokens"],
+        timeout_seconds: float = DEFAULTS["timeout_seconds"],
         transport: httpx.BaseTransport | None = None,
     ):
         self.url = base_url.rstrip("/") + "/v1/messages"
         self.model = model
-        # Current models always think; the budget leaves room for thinking plus a short JSON answer.
         self.max_tokens = max_tokens
         headers = {"x-api-key": api_key, "anthropic-version": API_VERSION, "content-type": "application/json"}
-        self._client = httpx.Client(headers=headers, timeout=TIMEOUT_SECONDS, transport=transport)
+        self._client = httpx.Client(headers=headers, timeout=timeout_seconds, transport=transport)
 
     def complete(self, system: str, user: str) -> str:
         # No temperature: API version 2026-10-21 rejects sampling parameters. Low effort keeps

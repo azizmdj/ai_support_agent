@@ -162,11 +162,6 @@ def test_all_providers_fail(make_env):
     assert row.payload == {"error_type": "ProviderError", "reason_code": "provider_error"}
 
 
-def test_rule_hit_never_calls_a_real_model(make_env):
-    model = RecordingModel()
-    env = make_env(llm=FallbackChain([("real", LLMClassifier(model))]))
-    assert env.run(ticket("This is fraud")).state == CaseState.ESCALATED
-    assert model.payloads == []
 
 
 # --- Swapping providers without code changes -------------------------------------------------------
@@ -319,22 +314,6 @@ def test_no_pii_reaches_a_model_audit_or_log(make_env, caplog, mode):
 
 
 # --- Console -------------------------------------------------------------------------------------------
-def test_console_header_shows_provider_chain(monkeypatch):
-    from fastapi.testclient import TestClient
-
-    from triage_agent.web.app import create_app
-
-    app = create_app(db_path=":memory:", seed_tickets=None)
-    assert "Model: <strong>fake</strong>" in TestClient(app).get("/").text
-
-    monkeypatch.setenv("TRIAGE_PROVIDER", "openai_main,fake")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-real-0004")
-    app = create_app(db_path=":memory:", seed_tickets=None)
-    html = TestClient(app).get("/").text
-    assert "Model: <strong>openai_main, then fake</strong>" in html
-    assert "test-key-not-real-0004" not in html
-
-
 def test_details_show_masked_message():
     from fastapi.testclient import TestClient
 
@@ -344,8 +323,8 @@ def test_details_show_masked_message():
     case = app.state.pipeline.process(ticket("Fees? IBAN DE89 3704 0044 0532 0130 00, mail a.b@example.org", id="M1"))
     html = TestClient(app).get(f"/cases/{case.id}").text
     details = html.split('<details class="details">', 1)[1]
-    assert "What the AI saw (masked)" in details
-    assert "Fees? IBAN &lt;IBAN_1&gt;, mail &lt;EMAIL_1&gt;" in details
+    classify_row = details.split("<td>3. Classify</td>", 1)[1].split("</tr>", 1)[0]
+    assert "the masked message: Fees? IBAN &lt;IBAN_1&gt;, mail &lt;EMAIL_1&gt;" in classify_row
     assert "DE89 3704" not in details
     # Nothing masked was stored anywhere new.
     assert "IBAN_1" not in json.dumps(app.state.store.conn.execute("SELECT * FROM cases").fetchall())

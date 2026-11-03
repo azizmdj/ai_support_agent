@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block main %}
+<main class="system">
+  <h1>System</h1>
+  <p>Everything on this page is read from the loaded config. It changes nothing.</p>
+
+  <section id="flow">
+    <h2>Flow</h2>
+    <table>
+      <thead><tr><th>Step</th><th>Who</th><th>What it does</th><th>Input -&gt; output</th><th>Controlled by</th></tr></thead>
+      <tbody>
+        {% for f in flow %}
+          <tr id="{{ f.anchor }}"><td>{{ f.step }}</td><td>{{ f.who }}</td><td>{{ f.what }}</td><td>{{ f.io }}</td><td>{{ f.controlled }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section id="settings">
+    <h2>Settings</h2>
+    <table class="kv">
+      <tr><th>config_version</th><td><code>{{ config_version }}</code></td></tr>
+      <tr><th>Pause</th><td>{{ "ON: every ticket goes to a person unless a rule escalates it" if paused else "OFF" }}</td></tr>
+      <tr><th>confidence_threshold</th><td>{{ threshold }}</td></tr>
+      <tr><th>unclear_deadline</th><td>{{ unclear_deadline }}</td></tr>
+      <tr><th>Reviewer id</th><td>{{ reviewer }}</td></tr>
+    </table>
+    <h3>Provider chain (tried in this order)</h3>
+    <table>
+      <thead><tr><th>Id</th><th>Kind</th><th>Model</th><th>Host</th><th>Temperature</th><th>max_tokens</th><th>Timeout</th><th>Key variable</th></tr></thead>
+      <tbody>
+        {% for p in providers %}
+          <tr><td>{{ p.id }}</td><td>{{ p.kind }}</td><td>{{ p.model }}</td><td>{{ p.host }}</td><td>{{ p.temperature }}</td><td>{{ p.max_tokens }}</td><td>{{ p.timeout }}</td><td>{{ p.key }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="note">Settings are edited in the pack files. Restart, then check that config_version changed.</p>
+  </section>
+
+  <section id="business-rules">
+    <h2>Business rules</h2>
+    <h3>Classes</h3>
+    <table>
+      <thead><tr><th>Name</th><th>Priority</th><th>Team</th><th>Deadline</th><th>Risk</th><th>Draft mode</th><th>Templates</th><th>Languages</th></tr></thead>
+      <tbody>
+        {% for c in classes %}
+          <tr><td>{{ c.name }}{% if c.builtin %} (built in){% endif %}</td><td>{{ c.priority }}</td><td>{{ c.team }}</td><td>{{ c.deadline }}</td><td>{{ c.risk }}</td><td>{{ c.draft_mode }}</td><td>{{ c.templates }}</td><td>{{ c.languages }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <h3>Rules (run before the model; when one fires, the model is not called)</h3>
+    <table>
+      <thead><tr><th>Id</th><th>Action</th><th>Target class</th><th>Keywords</th><th>Languages</th></tr></thead>
+      <tbody>
+        {% for r in rules %}
+          <tr><td>{{ r.id }}</td><td>{{ r.action }}</td><td>{{ r.target }}</td><td>{{ r.keywords }}</td><td>{{ r.languages }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="note">Fraud and complaint classes are locked: they never get a draft, and the validator rejects any config that changes this.</p>
+  </section>
+
+  <section id="explain">
+    <h2>Explain</h2>
+    <details>
+      <summary>Business: three costly mistakes and what prevents each</summary>
+      <table>
+        <thead><tr><th>Mistake</th><th>Control</th></tr></thead>
+        <tbody>
+          <tr><td>A fraud report waits in the general queue.</td><td>Fraud keyword rules escalate before any model call; the fraud class is locked, so it never gets a draft; the Urgent lane is sorted by deadline{% if deadlines.fraud_report %} ({{ deadlines.fraud_report }}){% endif %}.</td></tr>
+          <tr><td>A complaint misses its response deadline.</td><td>Complaint rules and the locked complaint class send it to a person; every case gets a due time from its class deadline{% if deadlines.complaint %} ({{ deadlines.complaint }}){% endif %}, shown in the queue.</td></tr>
+          <tr><td>A wrong answer about fees or limits.</td><td>Replies come only from approved templates filled with ticket fields, never written by the model; a person approves every reply; a wrong class is one click to correct.</td></tr>
+        </tbody>
+      </table>
+    </details>
+    <details>
+      <summary>Math: the decision rule and what the numbers mean</summary>
+      <p>A ticket is drafted only if all of these hold; otherwise it goes to a person:</p>
+      <ol>
+        <li>no escalate rule fired,</li>
+        <li>the model label is in the taxonomy,</li>
+        <li>confidence c &gt;= threshold ({{ threshold }}),</li>
+        <li>the class is not locked,</li>
+        <li>all template fields exist in the ticket,</li>
+        <li>the language has a template.</li>
+      </ol>
+      <p>Confidence is self-reported by the model, not a calibrated probability.</p>
+      <ul>
+        <li><strong>recall</strong> = correct tickets of a class / all true tickets of that class</li>
+        <li><strong>coverage</strong> = drafted / in-scope, non-risky tickets</li>
+        <li><strong>wrong_draft_rate</strong> = drafts with the wrong class or sub-type / all drafts</li>
+        <li><strong>pii_leak_rate</strong> = PII tickets where a seeded value reaches a model call / all PII tickets</li>
+      </ul>
+      <p>Small samples: with 0 failures in n tickets, the 95% upper bound on the true failure rate is about 3/n (the rule of three). For 28 fraud and complaint tickets that is 3/28 = 11%, so "0 drafted" is evidence, not proof.</p>
+    </details>
+    <details>
+      <summary>Engineering: interfaces, states, audit and how to extend</summary>
+      <ul>
+        <li><strong>Interfaces:</strong> <code>TextModel.complete(system, user)</code> for models, <code>TicketSource</code> (fetch new tickets, send an approved reply) for the ticket system, <code>CaseStore</code> for storage (default SQLite).</li>
+        <li><strong>Audit:</strong> every step writes an audit row with the config_version. Rows hold ids, class names, confidence, hashes and short codes, never message text.</li>
+        <li><strong>Fail closed:</strong> if masking fails, no model is called; if every provider fails or answers invalid JSON, the case goes to a person; a missing field or language means no draft; only the approval gate can send.</li>
+        <li><strong>Add a class:</strong> a block in <code>pack/taxonomy.yaml</code>, a template per language in <code>pack/templates/</code>, and example tickets in <code>eval/tickets.jsonl</code>. The validator runs on start; then run <code>eval</code>.</li>
+        <li><strong>Add a model:</strong> a block in <code>pack/models.yaml</code> for an OpenAI-compatible or Anthropic API, or a new adapter with one <code>complete()</code> method.</li>
+      </ul>
+      <table>
+        <thead><tr><th>Case state</th><th>Can move to</th></tr></thead>
+        <tbody>{% for src, dst in transitions %}<tr><td>{{ src }}</td><td>{{ dst }}</td></tr>{% endfor %}</tbody>
+      </table>
+    </details>
+  </section>
+</main>
+{% endblock %}

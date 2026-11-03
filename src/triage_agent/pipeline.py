@@ -13,7 +13,7 @@ from .config import UNCLEAR, ClassConfig, Config, TemplateRef
 from .llm import LLMProvider
 from .masking import MaskingError
 from .models import Case, CaseState, ClassifierResult, Ticket, text_hash
-from .rules import RuleHit, match_rules
+from .rules import match_rules
 from .store import CaseStore
 from .templates import MissingField, fill
 
@@ -56,17 +56,18 @@ class Pipeline:
         return case
 
     def _classify(self, ticket: Ticket, case: Case) -> str | None:
-        """Set class on the case. Returns "escalate" (rule demands it), "paused" or None."""
+        """Set class on the case. Returns "escalate" (a rule fired), "paused" or None."""
         hit = match_rules(ticket, self.config)
-        if hit is not None and hit.rule.action == "escalate":
-            return self._rule_hit(case, hit)
+        if hit is not None:
+            case.class_name, case.rule_id = hit.class_name, hit.rule.id
+            case.reason = f"rule {hit.rule.id}"
+            self.audit.write(case.id, ACTOR, "rule_matched", rule_id=hit.rule.id, **{"class": hit.class_name})
+            return "escalate"
         if self.store.is_paused():
-            # Pause switch: no model call, everything a rule does not escalate goes to a person.
+            # Pause switch: no model call; everything a rule does not escalate goes to a person.
             case.class_name, case.reason = UNCLEAR, "paused"
             self.audit.write(case.id, ACTOR, "held_paused", reason_code="paused")
             return "paused"
-        if hit is not None:
-            return self._rule_hit(case, hit)
 
         classes = [c for c in self.config.classes.values() if c.name != UNCLEAR]
         try:
@@ -103,12 +104,6 @@ class Pipeline:
             **({"provider": result.provider} if result.provider else {}),
         )
         return None
-
-    def _rule_hit(self, case: Case, hit: RuleHit) -> str | None:
-        case.class_name, case.rule_id = hit.class_name, hit.rule.id
-        case.reason = f"rule {hit.rule.id}"
-        self.audit.write(case.id, ACTOR, "rule_matched", rule_id=hit.rule.id, **{"class": hit.class_name})
-        return "escalate" if hit.rule.action == "escalate" else None
 
     def _model_error(self, case: Case, exc: Exception, reason_code: str) -> None:
         case.class_name = UNCLEAR

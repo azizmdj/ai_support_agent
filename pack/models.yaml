@@ -1,6 +1,9 @@
 # Model providers. Keys never live here: api_key_env names the environment variable that holds one.
 # routing.default is the ordered fallback chain. TRIAGE_PROVIDER=id1,id2 overrides it for one run.
 # Every call to a non-fake provider receives masked text only (see src/triage_agent/masking.py).
+# Optional per provider: temperature (0-2, openai_compatible only), max_tokens (1-4096),
+# timeout_seconds (1-120). Unset means the adapter default: openai_compatible temperature 0,
+# max_tokens 300, timeout 20 s; anthropic no temperature, max_tokens 1024, timeout 20 s.
 providers:
   - id: fake
     kind: fake            # deterministic keyword classifier, offline
