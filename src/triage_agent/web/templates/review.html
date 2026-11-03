@@ -2,7 +2,7 @@
 {% block body %}
 <div class="layout">
   <aside class="sidebar" aria-label="Queue">
-    <a class="new" href="/">New message</a>
+    <a class="new" href="/new" {% if not selected %}aria-current="page"{% endif %}>New message</a>
     <details class="queue" open>
       <summary>Queue ({{ total }})</summary>
       {% for key, title, cases in lanes %}
@@ -42,17 +42,14 @@
 
   <main class="main">
     {% include "banner.html" %}
-    <form class="send" method="post" action="/scenarios/{{ scenarios[0].id }}" aria-label="Send a test message">
-      <span>Send a test message:</span>
-      {% for s in scenarios %}
-        <button type="submit" class="pill" formaction="/scenarios/{{ s.id }}">{{ s.label }}</button>
-      {% endfor %}
-    </form>
-
     {% if not selected %}
       <div class="home">
-        <p>Queue is empty. Send a test message to start.</p>
-        <p class="hint"><a href="/system#flow">How a ticket moves</a></p>
+        <p>{% if not total %}Queue is empty. {% endif %}Send a test message to see <a href="/system#flow">how a ticket moves</a>.</p>
+        <form class="send" method="post" action="/scenarios/{{ scenarios[0].id }}" aria-label="Send a test message">
+          {% for s in scenarios %}
+            <button type="submit" class="pill" formaction="/scenarios/{{ s.id }}">{{ s.label }}</button>
+          {% endfor %}
+        </form>
       </div>
     {% else %}
       {% set c = selected %}

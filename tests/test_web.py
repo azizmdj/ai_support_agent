@@ -97,11 +97,9 @@ def test_page_renders_lanes_and_header(console):
     assert f"Config <code>{console.app.state.config.version}</code>" in status
     assert "Pause: <strong>OFF</strong>" in status
     assert status.count("<button") == 1 and 'action="/pause"' in status  # the pause switch lives here
-    assert '<a class="new" href="/">New message</a>' in html
+    assert '<a class="new" href="/new" >New message</a>' in html  # a case is open, so not the current page
     assert '<details class="queue" open>' in html and "<summary>Queue (15)</summary>" in html
-    assert "Send a test message:" in html
-    for label in ("Routine question", "Fraud report", "Complaint", "Hostile message"):
-        assert 'class="pill" formaction="/scenarios/' in html and f">{label}</button>" in html
+    assert 'class="pill"' not in html  # test-message buttons live on /new only
     for title in ("Urgent", "Ready to approve", "Needs a person"):
         assert title in html
     assert "Urgent <span class=\"count\">(5)</span>" in html
@@ -114,7 +112,8 @@ def test_page_renders_lanes_and_header(console):
 
 def test_get_requests_never_change_state(console):
     before = console.audit_count()
-    pages = ["/", "/?msg=sent", "/system", "/health", "/static/style.css"] + [f"/cases/{c.id}" for c in console.store.list()]
+    pages = ["/", "/?msg=sent", "/new", "/system", "/health", "/static/style.css"]
+    pages += [f"/cases/{c.id}" for c in console.store.list()]
     for url in pages:
         assert console.client.get(url).status_code == 200, url
     for action in ("approve", "escalate", "take", "class"):
@@ -375,16 +374,34 @@ def test_redirect_goes_urgent_then_ready_then_needs(empty_console):
     assert c.post(f"/cases/{needs.id}/escalate") == f"/cases/{needs.id}?msg=escalated"
     assert c.post(f"/cases/{needs.id}/take") == "/?msg=taken"
     html = c.client.get("/?msg=taken").text
-    assert "Queue is empty. Send a test message to start." in html
+    assert "Done:</strong> Case taken." in html and "Queue is empty. Send a test message" in html
+
+
+def home_main(html):
+    return html.split('<main class="main">', 1)[1].split("</main>", 1)[0]
 
 
 def test_empty_queue_page(empty_console):
-    html = empty_console.client.get("/").text
-    main = html.split('<main class="main">', 1)[1]
-    assert "Queue is empty. Send a test message to start." in main
-    assert '<a href="/system#flow">How a ticket moves</a>' in main
+    html = empty_console.client.get("/").text  # an empty queue renders the home screen
+    main = home_main(html)
+    assert "Queue is empty. Send a test message to see" in main
+    assert '<a href="/system#flow">how a ticket moves</a>' in main
     assert main.count('class="pill"') == 4 and "<article" not in main and 'class="primary"' not in main
     assert "Ready to approve <span class=\"count\">(0)</span>" in html
+
+
+def test_new_message_home_screen(console):
+    before = console.audit_count()
+    html = console.client.get("/new").text
+    main = home_main(html)
+    assert main.lstrip().startswith('<div class="home">') and "<article" not in main
+    assert "Queue is empty" not in main and "Send a test message to see" in main
+    for s in ("routine", "fraud", "complaint", "hostile"):
+        assert f'class="pill" formaction="/scenarios/{s}"' in main
+    assert '<a class="new" href="/new" aria-current="page">New message</a>' in html
+    assert "<summary>Queue (15)</summary>" in html and 'aria-current="true"' not in html  # sidebar, no case open
+    assert console.client.post("/new").status_code == 405
+    assert console.audit_count() == before
 
 
 # --- Static safety checks ----------------------------------------------------------------------

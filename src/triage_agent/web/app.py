@@ -214,6 +214,12 @@ def create_app(
             target = next_case_id()
             return render(store.get(target) if target else None, msg)
 
+    @app.get("/new", response_class=HTMLResponse)
+    def new_message(msg: str | None = None):
+        """Home screen: only the test-message buttons. Reads only."""
+        with lock:
+            return render(None, msg)
+
     @app.get("/cases/{case_id}", response_class=HTMLResponse)
     def show_case(case_id: str, msg: str | None = None):
         with lock:
