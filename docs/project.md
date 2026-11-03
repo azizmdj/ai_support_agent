@@ -165,7 +165,7 @@ The header shows the app name with "Unofficial demo, synthetic data" and the lin
 
 &#91;embedded content: reviewer console · one card per ticket\]
 
-The page has a slim sidebar on the left and a centered column of about 720px. The sidebar starts with a "New message" link to the home screen, then lists the queue in three lanes, each with a count; a row shows the ticket id, the class and the due time. Only the queue scrolls, so the footer stays visible: the model (linked to the settings on System), the config version, the pause state with its switch, and a link to System.
+The page has a slim sidebar on the left and a centered column of about 720px. The sidebar starts with a "New message" link to the home screen, then lists the queue in three lanes, each with a count; a row shows the ticket id, the class and the due time. Only the queue scrolls, so the footer stays visible: the model (linked to the settings on System), the config version, and the pause state with its switch. The System link is in the header only. The queue scrollbar is thin and low-contrast in light and dark mode.
 
 - **Urgent:** escalated cases, sorted by deadline, with a relative due time such as "due in 45m" or "overdue by 5m".
 - **Ready to approve:** drafted cases.
@@ -178,7 +178,7 @@ Each ticket is one decision card: a line with the ticket id, class and due time,
 | Card | Primary button | Inside "Something wrong?" |
 | --- | --- | --- |
 | Drafted | **Approve and send** (the draft is editable; a changed text is logged as an edit, then approved) | Wrong class, Escalate to a person |
-| Needs a person | **Set class and draft** | Escalate to a person |
+| Needs a person | **Set class and draft** (the class select starts on "Choose a class..."; submitting without a class is rejected with a "Not done:" banner and changes nothing) | Escalate to a person |
 | Escalated (fraud, complaint) | **Take case** | none |
 
 - After any action the next ticket opens automatically: Urgent first, then Ready, then Needs a person. A one-line banner confirms the action, such as "Done: Reply sent via mock ticket system."
@@ -490,7 +490,7 @@ These run in CI on every push to `main` and on every pull request, and locally w
 | Pause switch | While paused, fraud still escalates, everything else goes to a person, and the model is not called | Built |
 | System page | Shows the flow, settings and rules from the loaded pack and follows a changed pack after a restart; shows whether a key variable is set but never its value; GET changes nothing; config text is escaped | Built |
 | Packaging | `/health` returns ok and the provider ids without state change or secrets; compose passes the key variables by name only; the Dockerfile copies only existing paths | Built |
-| Reviewer console | Scenarios land in the right lane; approve, edit, stale draft, escalate and wrong class behave and log correctly; exactly one primary button per card; the card order is message, collapsed Steps, draft, primary button; trail steps link to System; the header holds no controls and the pause switch sits in the sidebar; typed messages land in the right lane, a bad input creates no case and no audit row, the typed text never reaches an audit row or a URL, and the composer appears only on New message; GET never changes state; customer text is escaped | Built |
+| Reviewer console | Scenarios land in the right lane; approve, edit, stale draft, escalate and wrong class behave and log correctly; exactly one primary button per card; the card order is message, collapsed Steps, draft, primary button; trail steps link to System; the header holds no controls and the pause switch sits in the sidebar; the Needs-a-person class select starts on a placeholder that the server rejects with no state change and no audit row; typed messages land in the right lane, a bad input creates no case and no audit row, the typed text never reaches an audit row or a URL, and the composer appears only on New message; GET never changes state; customer text is escaped | Built |
 
 Shorter unit tests cover config validation, template filling (a missing field or language blocks the draft), audit-log fields and config version, the model-down path, invalid model output, deadlines, the journey trail and the no-network guard. Storage tests on Postgres are (not built). CI also runs the ruff linter. A run with the real model on demand is the `classify` command.
 

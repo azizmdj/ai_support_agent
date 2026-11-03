@@ -258,7 +258,8 @@ def create_app(
         return _act(case_id, lambda: gate.take(case_id, reviewer), "taken")
 
     @app.post("/cases/{case_id}/class")
-    def correct_class(case_id: str, new_class: str = Form(...)):
+    def correct_class(case_id: str, new_class: str = Form("")):
+        """A missing or placeholder class gets the error banner (not a 422); the gate rejects it before any write."""
         return _act(case_id, lambda: gate.correct_class(case_id, reviewer, new_class), "corrected")
 
     def _act(case_id: str, action: Callable[[], object], msg: str) -> RedirectResponse:

@@ -61,6 +61,7 @@ th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(-
 .new { display: block; padding: .45rem .75rem; border: 1px solid var(--border-strong); border-radius: 8px; text-decoration: none; color: var(--text); font-weight: 600; }
 .new:hover, .new:focus { background: var(--surface-2); }
 .queue { flex: 1 1 auto; min-height: 0; margin: 0; overflow-y: auto; } /* only the queue scrolls */
+.queue { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; } /* thin, low-contrast; the variables follow light and dark */
 .queue > summary { display: none; } /* desktop: the queue is always open; the summary shows on phones */
 .lane { margin-bottom: 1rem; }
 .lane h2 { margin: 0 0 .25rem; padding: 0 .5rem; font-size: .75rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }

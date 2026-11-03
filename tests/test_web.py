@@ -97,6 +97,7 @@ def test_page_renders_lanes_and_header(console):
     assert f"Config <code>{console.app.state.config.version}</code>" in status
     assert "Pause: <strong>OFF</strong>" in status
     assert status.count("<button") == 1 and 'action="/pause"' in status  # the pause switch lives here
+    assert '<a href="/system">System</a>' not in status  # the header link is the only System link
     assert '<a class="new" href="/new" >New message</a>' in html  # a case is open, so not the current page
     assert '<details class="queue" open>' in html and "<summary>Queue (15)</summary>" in html
     assert 'class="pill"' not in html  # test-message buttons live on /new only
@@ -316,6 +317,20 @@ def test_correct_class_uses_default_template_and_rejects_bad_input(console):
     assert console.post(f"/cases/{case.id}/class", new_class="unclear").endswith("?msg=error")
     assert console.post(f"/cases/{case.id}/class", new_class="nope").endswith("?msg=error")
     assert console.post("/cases/case-T03/class", new_class="fee_question").endswith("?msg=error")
+
+
+def test_needs_person_class_select_starts_on_placeholder_and_rejects_it(console):
+    case = console.case("T12")  # needs_person
+    html = console.client.get(f"/cases/{case.id}").text
+    select = html.split('<select id="set_class"', 1)[1].split("</select>", 1)[0]
+    assert '<option value="" disabled selected>Choose a class...</option>' in select
+    assert select.count("selected") == 1  # no real class preselected
+    before, state = console.audit_count(), console.store.get(case.id)
+    for data in ({}, {"new_class": ""}, {"new_class": "Choose a class..."}):
+        resp = console.client.post(f"/cases/{case.id}/class", data=data)
+        assert resp.status_code == 303 and resp.headers["location"].endswith("?msg=error")
+    assert console.store.get(case.id) == state and console.audit_count() == before
+    assert "Not done:</strong>" in console.client.get(f"/cases/{case.id}?msg=error").text
 
 
 def test_take_case(console):
