@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block intro %}
+<p class="entry">Pick a ticket on the left or send a test message. The trail shows what each step did. Rules, settings and explanations are on the <a href="/system">System tab</a>.</p>
+{% endblock %}
+{% block main %}
+<form class="send" method="post" action="/scenarios/{{ scenarios[0].id }}" aria-label="Send a test message">
+  <span>Send a test message:</span>
+  {% for s in scenarios %}
+    <button type="submit" formaction="/scenarios/{{ s.id }}">{{ s.label }}</button>
+  {% endfor %}
+</form>
+
+<main class="layout">
+  <aside class="lanes" aria-label="Queue">
+    {% for key, title, cases in lanes %}
+      <section class="lane lane-{{ key }}">
+        <h2>{{ title }} <span class="count">({{ cases|length }})</span></h2>
+        {% if cases %}
+          <ul>
+            {% for c in cases %}
+              {% set is_sel = selected and c.id == selected.id %}
+              <li class="{{ 'selected' if is_sel }}">
+                <a href="/cases/{{ c.id }}" {% if is_sel %}aria-current="true"{% endif %}>
+                  {% if is_sel %}<span class="marker">Open:</span>{% endif %}
+                  <span class="tid">{{ c.ticket_id }}</span>
+                  <span class="cls">{{ c.class_name }}</span>
+                  <span class="due">{{ due(c) }}</span>
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="empty">None</p>
+        {% endif %}
+      </section>
+    {% endfor %}
+  </aside>
+
+  <section class="card-area">
+    {% if not selected %}
+      <div class="card empty-queue">
+        <h1>Queue is empty.</h1>
+        <ol class="guide">
+          <li>Send a test message above.</li>
+          <li>Review the case: the trail shows what happened, step by step.</li>
+          <li>Open System to see the rules, settings and the reasoning.</li>
+        </ol>
+        {% set generic = true %}{% include "journey.html" %}
+        <p class="hint">Try a scenario button above. Each one sends a new ticket through these six steps.</p>
+      </div>
+    {% else %}
+      {% set c = selected %}
+      <article class="card state-{{ c.state.value }}">
+        {% set generic = false %}{% include "journey.html" %}
+        <p class="reason"><strong>Why:</strong> {{ c.reason }}</p>
+        <p class="facts">{{ c.ticket_id }} ({{ c.language }}) · state <strong>{{ c.state.value }}</strong> ·
+          class <strong>{{ c.class_name }}{% if c.subtype %} / {{ c.subtype }}{% endif %}</strong> ·
+          priority {{ c.priority }} · team {{ c.team }} · {{ due(c) }}</p>
+
+        <h2>Customer message</h2>
+        <blockquote class="message">{{ ticket.text }}</blockquote>
+
+        {% if c.state.value == "drafted" %}
+          <form method="post" action="/cases/{{ c.id }}/approve" class="draft">
+            <label for="body"><strong>Draft reply</strong> (template {{ c.template_id }}{% if c.edited %}, edited{% endif %}). Edit if needed.</label>
+            <textarea id="body" name="body" rows="14">{{ c.draft }}</textarea>
+            <input type="hidden" name="draft_hash" value="{{ c.draft_hash }}">
+            <button type="submit" class="primary">Approve and send</button>
+          </form>
+        {% elif c.state.value == "escalated" %}
+          <p class="note">No template and no draft: a person handles this case directly.</p>
+          <form method="post" action="/cases/{{ c.id }}/take">
+            <button type="submit" class="primary">Take case</button>
+          </form>
+        {% elif c.state.value == "needs_person" %}
+          <p class="note">No draft. Pick the right class to create one.</p>
+          <form method="post" action="/cases/{{ c.id }}/class" class="inline">
+            <label for="set_class">Class:</label>
+            <select id="set_class" name="new_class">{% for cls in classes %}<option value="{{ cls.name }}">{{ cls.name }}{% if cls.risk == "locked" %} (locked, escalates){% endif %}</option>{% endfor %}</select>
+            <button type="submit" class="primary">Set class and draft</button>
+          </form>
+        {% else %}
+          <p class="note">This case is {{ c.state.value }} and has left the queue.</p>
+        {% endif %}
+
+        {% if c.state.value in ("drafted", "needs_person") %}
+          <details class="secondary">
+            <summary>Something wrong?</summary>
+            {% if c.state.value == "drafted" %}
+              <form method="post" action="/cases/{{ c.id }}/class" class="inline">
+                <label for="new_class">Wrong class:</label>
+                <select id="new_class" name="new_class">{% for cls in classes %}<option value="{{ cls.name }}" {% if cls.name == c.class_name %}selected{% endif %}>{{ cls.name }}{% if cls.risk == "locked" %} (locked, escalates){% endif %}</option>{% endfor %}</select>
+                <button type="submit">Change class</button>
+              </form>
+            {% endif %}
+            <form method="post" action="/cases/{{ c.id }}/escalate" class="inline">
+              <button type="submit">Escalate to a person</button>
+            </form>
+          </details>
+        {% endif %}
+
+        <details class="details">
+          <summary>Details: what each step saw and produced</summary>
+          <table>
+            <thead><tr><th>Step</th><th>Input</th><th>Output</th><th>Config used</th></tr></thead>
+            <tbody>
+              {% for s in steps %}
+                <tr><td>{{ s.number }}. {{ s.name }}</td><td>{{ s.input or "-" }}</td><td>{{ s.result }}</td><td>{{ s.config or "-" }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <p class="hint">The masked message is computed from the stored ticket when this page loads. Names and free-text addresses are not masked.</p>
+          <details>
+            <summary>Audit log ({{ events|length }} rows)</summary>
+            <table>
+              <thead><tr><th>Time (UTC)</th><th>Actor</th><th>Event</th><th>Payload</th><th>Config</th></tr></thead>
+              <tbody>
+                {% for e in events %}
+                  <tr>
+                    <td>{{ e.ts[11:19] }}</td><td>{{ e.actor }}</td><td>{{ e.event }}</td>
+                    <td><code>{% for k, v in e.payload|dictsort %}{{ k }}={{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</code></td>
+                    <td><code>{{ e.config_version }}</code></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </details>
+        </details>
+      </article>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

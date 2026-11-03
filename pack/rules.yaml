@@ -1,8 +1,7 @@
 # Rules run before the LLM and always win. When a rule fires, the LLM is not called.
 # patterns: keywords (matched at word start, case- and accent-insensitive, ß = ss)
 #           or "re:<regex>" applied to the normalized (casefolded, accent-free) text.
-# action: escalate (straight to a person, no draft) | route (force the class, normal drafting).
-# Rules on a locked class must use action: escalate.
+# action: escalate is the only action: the ticket goes straight to a person, with no draft.
 # If several rules fire, the class with the highest priority wins.
 rules:
   - id: fraud_keywords

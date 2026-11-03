@@ -1,4 +1,4 @@
-"""Reviewer console: one server-rendered page, plain forms, no JavaScript.
+"""Reviewer console: a Review page and a read-only System page, plain forms, no JavaScript.
 
 GET requests only read. Every action is a POST that calls the Gate and then redirects to the next case.
 The web layer never talks to the ticket system directly; replies leave only through Gate.approve.
@@ -31,7 +31,8 @@ from ..pipeline import Pipeline
 from ..providers.registry import build_llm
 from ..store import CaseNotFound, SQLiteCaseStore, connect
 from ..ticket_source import MockTicketSource, load_tickets
-from .journey import generic_journey, journey
+from . import system
+from .journey import Context, generic_journey, journey
 
 HERE = Path(__file__).parent
 
@@ -140,29 +141,37 @@ def create_app(
     def back(case_id: str, msg: str) -> RedirectResponse:
         return RedirectResponse(f"/cases/{case_id}?msg={msg}", status_code=303)
 
+    def page(template: str, name: str, msg: str | None = None, **context) -> HTMLResponse:
+        header = dict(page=name, model_label=model_label, config_version=config.version, paused=store.is_paused(),
+                      banner=MESSAGES.get(msg or ""), banner_is_error=msg in {"stale", "error"})
+        return HTMLResponse(env.get_template(template).render(**header, **context))
+
+    trail_context = dict(threshold=config.settings.confidence_threshold, rule_count=len(config.rules),
+                         providers={pid: system.model_summary(config, pid) for pid in model_ids},
+                         chain=" -> ".join(model_ids), reviewer=reviewer)
+
     def render(selected: Case | None, msg: str | None) -> HTMLResponse:
         current = now()
         ticket = store.get_ticket(selected.ticket_id) if selected else None
         all_lanes = lanes()
         events = audit.events(selected.id) if selected else []
-        html = env.get_template("console.html").render(
-            reviewer=reviewer,
-            paused=store.is_paused(),
+        if selected:
+            model_called = any(e.event in {"classified", "model_error"} for e in events)
+            masked = masked_view(ticket.text) if model_called else None
+            steps = journey(selected, events, Context(masked=masked, **trail_context))
+        else:
+            steps = generic_journey()
+        return page(
+            "review.html", "review", msg,
             scenarios=list(scenarios.values()),
             lanes=[(key, title, all_lanes[key]) for key, title, _ in LANES],
             selected=selected,
             ticket=ticket,
             events=events,
-            model_label=model_label,
-            masked=masked_view(ticket.text) if ticket else None,
-            model_called=any(e.event in {"classified", "model_error"} for e in events),
-            steps=journey(selected, events) if selected else generic_journey(),
+            steps=steps,
             classes=[c for c in config.classes.values() if c.name != UNCLEAR],
             due=lambda c: relative_due(c.due_at, current),
-            banner=MESSAGES.get(msg or ""),
-            banner_is_error=msg in {"stale", "error"},
         )
-        return HTMLResponse(html)
 
     def masked_view(text: str) -> str:
         """What a real model sees. Computed on the fly from the stored ticket, never stored."""
@@ -182,6 +191,22 @@ def create_app(
     def health():
         """Liveness check for containers: provider ids only, no state change, no secrets."""
         return {"status": "ok", "models": model_ids}
+
+    @app.get("/system", response_class=HTMLResponse)
+    def system_page():
+        with lock:
+            return page(
+                "system.html", "system",
+                flow=system.flow_rows(config, model_ids),
+                threshold=config.settings.confidence_threshold,
+                unclear_deadline=config.settings.unclear_deadline,
+                reviewer=reviewer,
+                providers=system.provider_rows(config, model_ids, os.environ),
+                classes=system.class_rows(config),
+                rules=system.rule_rows(config),
+                deadlines={name: cls.deadline for name, cls in config.classes.items()},
+                transitions=system.transitions(),
+            )
 
     @app.get("/", response_class=HTMLResponse)
     def index(msg: str | None = None):

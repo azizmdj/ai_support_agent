@@ -48,9 +48,9 @@ def test_renamed_locked_class_is_still_rejected(pack):
     assert_rejected(pack, "fraud_v2 is locked")
 
 
-def test_rule_on_locked_class_must_escalate(pack):
+def test_rule_action_other_than_escalate_is_rejected(pack):
     edit_yaml(pack / "rules.yaml", lambda d: d["rules"][0].update(action="route"))
-    assert_rejected(pack, "only allows action 'escalate'")
+    assert_rejected(pack, "cannot parse pack")
 
 
 def test_rule_with_unknown_class_is_rejected(pack):

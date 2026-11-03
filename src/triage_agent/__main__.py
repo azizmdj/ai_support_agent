@@ -1,4 +1,4 @@
-"""Command line: `python -m triage_agent demo` runs the fixture tickets offline."""
+"""Command line: serve (reviewer console), eval (evaluation set), classify (one-off live check)."""
 
 from __future__ import annotations
 
@@ -6,50 +6,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import DEFAULT_PACK, DEFAULT_TICKETS
-from .audit import AuditLog
+from . import DEFAULT_PACK
 from .config import UNCLEAR, ConfigError, load_config
-from .gate import Gate
 from .masking import mask
-from .models import CaseState
-from .pipeline import Pipeline
 from .providers import ProviderError
 from .providers.registry import build_llm
-from .store import SQLiteCaseStore, connect
-from .ticket_source import MockTicketSource, load_tickets
-
-
-def demo(pack: Path, tickets_path: Path) -> int:
-    config = load_config(pack)
-    conn = connect(":memory:")
-    store, audit = SQLiteCaseStore(conn), AuditLog(conn, config.version)
-    source = MockTicketSource(load_tickets(tickets_path))
-    llm = build_llm(config)
-    pipeline = Pipeline(config, llm, store, audit)
-
-    cases = [pipeline.process(t) for t in source.fetch_new()]
-    print(f"config_version {config.version}  |  {len(cases)} tickets  |  model: {llm.describe()}  |  in-memory SQLite\n")
-    rows = [("ticket", "class", "state", "reason", "due_at (UTC)")]
-    rows += [
-        (c.ticket_id, c.class_name or "", c.state.value, c.reason, c.due_at.strftime("%Y-%m-%d %H:%M") if c.due_at else "")
-        for c in cases
-    ]
-    widths = [max(len(r[i]) for r in rows) for i in range(5)]
-    for i, row in enumerate(rows):
-        print("  ".join(cell.ljust(w) for cell, w in zip(row, widths)).rstrip())
-        if i == 0:
-            print("  ".join("-" * w for w in widths))
-
-    drafted = next((c for c in cases if c.state == CaseState.DRAFTED), None)
-    if drafted is None:
-        print("\nno drafted case to approve")
-        return 1
-    Gate(store, audit, source).approve(drafted.id, "demo", drafted.draft_hash or "")
-    ticket_id, body = source.sent[-1]
-    print(f"\nreviewer 'demo' approved {drafted.id} (template {drafted.template_id}); reply sent to {ticket_id}:\n")
-    print("    " + body.rstrip().replace("\n", "\n    "))
-    print(f"\naudit rows written: {len(audit.events())}")
-    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -57,9 +18,6 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(errors="replace")
     parser = argparse.ArgumentParser(prog="triage_agent")
     sub = parser.add_subparsers(dest="command", required=True)
-    p_demo = sub.add_parser("demo", help="run the fixture tickets through the pipeline")
-    p_demo.add_argument("--pack", type=Path, default=DEFAULT_PACK)
-    p_demo.add_argument("--tickets", type=Path, default=DEFAULT_TICKETS)
     p_cls = sub.add_parser("classify", help="mask one message and classify it with the active provider chain")
     p_cls.add_argument("text")
     p_cls.add_argument("--pack", type=Path, default=DEFAULT_PACK)
@@ -79,9 +37,7 @@ def main(argv: list[str] | None = None) -> int:
             return classify(args.pack, args.text)
         if args.command == "eval":
             return run_eval_command(args.pack, args.split, args.provider, args.out, args.write_baseline)
-        if args.command == "serve":
-            return serve(args.pack, args.host, args.port)
-        return demo(args.pack, args.tickets)
+        return serve(args.pack, args.host, args.port)
     except ConfigError as exc:  # names a missing variable, never a value
         print(exc, file=sys.stderr)
         return 2

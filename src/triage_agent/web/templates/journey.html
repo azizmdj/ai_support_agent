@@ -4,8 +4,8 @@
     {% for s in steps %}
       {% set key = s.status|lower|replace(" ", "-") %}
       <li class="step step-{{ key }}" {% if s.status == "Your turn" %}aria-current="step"{% endif %}>
-        <span class="step-name">{{ s.number }}. {{ s.name }}</span>
-        <span class="actor actor-{{ s.actor|lower }}">{{ s.actor }}</span>
+        <a class="step-name" href="/system#{{ s.anchor }}">{{ s.number }}. {{ s.name }}</a>
+        <span class="actor">{{ s.actor }}</span>
         <span class="result">{{ s.result }}</span>
         <span class="status">Status: <strong>{{ s.status }}</strong></span>
       </li>

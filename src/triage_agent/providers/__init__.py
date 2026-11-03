@@ -12,5 +12,3 @@ class ProviderError(Exception):
 class TextModel(Protocol):
     def complete(self, system: str, user: str) -> str: ...
 
-
-TIMEOUT_SECONDS = 20.0

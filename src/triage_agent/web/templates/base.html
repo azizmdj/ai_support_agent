@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Support triage console (unofficial demo)</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><strong>Support triage</strong> <span class="tag">Unofficial demo, synthetic data</span></div>
+  <nav class="tabs" aria-label="Pages">
+    <a href="/" {% if page == "review" %}aria-current="page"{% endif %}>Review</a>
+    <a href="/system" {% if page == "system" %}aria-current="page"{% endif %}>System</a>
+  </nav>
+  <div class="right">
+    <a class="chip" href="/system#settings">Model: {{ model_label }}</a>
+    <span class="chip">Config {{ config_version }}</span>
+    <form method="post" action="/pause" class="pause {{ 'is-on' if paused else 'is-off' }}">
+      <input type="hidden" name="paused" value="{{ 'off' if paused else 'on' }}">
+      <span>Pause: <strong>{{ "ON" if paused else "OFF" }}</strong></span>
+      <button type="submit">{{ "Resume" if paused else "Pause" }}</button>
+    </form>
+  </div>
+</header>
+<div class="container">
+{% block intro %}{% endblock %}
+{% if banner %}
+  <p class="banner {{ 'banner-error' if banner_is_error else 'banner-ok' }}" role="status">
+    <strong>{{ 'Not done:' if banner_is_error else 'Done:' }}</strong> {{ banner }}
+  </p>
+{% endif %}
+{% block main %}{% endblock %}
+</div>
+</body>
+</html>

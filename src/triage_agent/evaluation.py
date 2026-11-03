@@ -9,7 +9,7 @@ import json
 import os
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -407,7 +407,3 @@ def write_baseline(config: Config, path: Path = BASELINE_PATH) -> dict:
             for split in ("dev", "test")}
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return data
-
-
-def results_as_dicts(results: Sequence[TicketResult]) -> list[dict]:
-    return [asdict(r) for r in results]

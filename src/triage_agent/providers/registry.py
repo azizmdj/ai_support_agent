@@ -9,8 +9,7 @@ import httpx
 
 from ..config import Config, ConfigError, ProviderConfig
 from ..llm import FakeLLM, FallbackChain, LLMClassifier, LLMProvider
-from .anthropic import AnthropicModel
-from .openai_compatible import OpenAICompatibleModel
+from . import anthropic, openai_compatible
 
 ENV_OVERRIDE = "TRIAGE_PROVIDER"
 
@@ -37,17 +36,32 @@ def _key(provider: ProviderConfig, env: Mapping[str, str]) -> str | None:
     return value
 
 
+DEFAULTS = {"openai_compatible": openai_compatible.DEFAULTS, "anthropic": anthropic.DEFAULTS}
+
+
+def effective_params(provider: ProviderConfig) -> dict[str, float | int | None]:
+    """temperature, max_tokens and timeout_seconds: the models.yaml value, else the adapter default."""
+    if provider.kind == "fake":
+        return {"temperature": None, "max_tokens": None, "timeout_seconds": None}
+    defaults = DEFAULTS[provider.kind]
+    return {name: getattr(provider, name) if getattr(provider, name) is not None else default
+            for name, default in defaults.items()}
+
+
 def build_provider(
     provider: ProviderConfig, env: Mapping[str, str], transport: httpx.BaseTransport | None = None
 ) -> LLMProvider:
     if provider.kind == "fake":
         return FakeLLM()
     key = _key(provider, env)
+    params = effective_params(provider)
     if provider.kind == "openai_compatible":
-        return LLMClassifier(OpenAICompatibleModel(provider.base_url, provider.model, key, transport=transport))
+        return LLMClassifier(openai_compatible.OpenAICompatibleModel(
+            provider.base_url, provider.model, key, transport=transport, **params))
     if key is None:
         raise ConfigError([f"provider {provider.id}: kind anthropic needs api_key_env"])
-    return LLMClassifier(AnthropicModel(provider.base_url, provider.model, key, transport=transport))
+    params.pop("temperature")
+    return LLMClassifier(anthropic.AnthropicModel(provider.base_url, provider.model, key, transport=transport, **params))
 
 
 def build_llm(
