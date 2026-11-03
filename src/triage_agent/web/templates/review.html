@@ -1,40 +1,54 @@
 {% extends "base.html" %}
-{% block intro %}
+{% block body %}
+<div class="layout">
+  <aside class="sidebar" aria-label="Queue">
+    <a class="new" href="/">New message</a>
+    <details class="queue" open>
+      <summary>Queue ({{ total }})</summary>
+      {% for key, title, cases in lanes %}
+        <section class="lane lane-{{ key }}">
+          <h2>{{ title }} <span class="count">({{ cases|length }})</span></h2>
+          {% if cases %}
+            <ul>
+              {% for c in cases %}
+                {% set is_sel = selected and c.id == selected.id %}
+                <li class="{{ 'selected' if is_sel }}">
+                  <a href="/cases/{{ c.id }}" {% if is_sel %}aria-current="true"{% endif %}>
+                    {% if is_sel %}<span class="marker">Open:</span>{% endif %}
+                    <span class="tid">{{ c.ticket_id }}</span>
+                    <span class="cls">{{ c.class_name }}</span>
+                    <span class="due">{{ due(c) }}</span>
+                  </a>
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="empty">None</p>
+          {% endif %}
+        </section>
+      {% endfor %}
+    </details>
+    <div class="status">
+      <p>Model: <a href="/system#settings">{{ model_label }}</a></p>
+      <p>Config <code>{{ config_version }}</code></p>
+      <form method="post" action="/pause" class="pause {{ 'is-on' if paused else 'is-off' }}">
+        <input type="hidden" name="paused" value="{{ 'off' if paused else 'on' }}">
+        <span>Pause: <strong>{{ "ON" if paused else "OFF" }}</strong></span>
+        <button type="submit">{{ "Resume" if paused else "Pause" }}</button>
+      </form>
+      <p><a href="/system">System</a></p>
+    </div>
+  </aside>
+
+  <main class="main">
 <p class="entry">Pick a ticket on the left or send a test message. The trail shows what each step did. Rules, settings and explanations are on the <a href="/system">System tab</a>.</p>
-{% endblock %}
-{% block main %}
+{% include "banner.html" %}
 <form class="send" method="post" action="/scenarios/{{ scenarios[0].id }}" aria-label="Send a test message">
   <span>Send a test message:</span>
   {% for s in scenarios %}
     <button type="submit" formaction="/scenarios/{{ s.id }}">{{ s.label }}</button>
   {% endfor %}
 </form>
-
-<main class="layout">
-  <aside class="lanes" aria-label="Queue">
-    {% for key, title, cases in lanes %}
-      <section class="lane lane-{{ key }}">
-        <h2>{{ title }} <span class="count">({{ cases|length }})</span></h2>
-        {% if cases %}
-          <ul>
-            {% for c in cases %}
-              {% set is_sel = selected and c.id == selected.id %}
-              <li class="{{ 'selected' if is_sel }}">
-                <a href="/cases/{{ c.id }}" {% if is_sel %}aria-current="true"{% endif %}>
-                  {% if is_sel %}<span class="marker">Open:</span>{% endif %}
-                  <span class="tid">{{ c.ticket_id }}</span>
-                  <span class="cls">{{ c.class_name }}</span>
-                  <span class="due">{{ due(c) }}</span>
-                </a>
-              </li>
-            {% endfor %}
-          </ul>
-        {% else %}
-          <p class="empty">None</p>
-        {% endif %}
-      </section>
-    {% endfor %}
-  </aside>
 
   <section class="card-area">
     {% if not selected %}
@@ -129,5 +143,6 @@
       </article>
     {% endif %}
   </section>
-</main>
+  </main>
+</div>
 {% endblock %}

@@ -91,10 +91,14 @@ def test_page_renders_lanes_and_header(console):
     header = html.split("<header", 1)[1].split("</header>", 1)[0]
     assert "Unofficial demo, synthetic data" in header
     assert '<a href="/" aria-current="page">Review</a>' in header and '<a href="/system" >System</a>' in header
-    assert 'href="/system#settings">Model: FakeLLM</a>' in header
-    assert f"Config {console.app.state.config.version}" in header
-    assert "Pause: <strong>OFF</strong>" in header
-    assert header.count("<button") == 1  # the pause switch is the only control in the header
+    assert "<button" not in header and "<form" not in header  # the header holds only the name and links
+    status = html.split('<div class="status">', 1)[1].split("</div>", 1)[0]  # sidebar footer
+    assert 'Model: <a href="/system#settings">FakeLLM</a>' in status
+    assert f"Config <code>{console.app.state.config.version}</code>" in status
+    assert "Pause: <strong>OFF</strong>" in status
+    assert status.count("<button") == 1 and 'action="/pause"' in status  # the pause switch lives here
+    assert '<a class="new" href="/">New message</a>' in html
+    assert '<details class="queue" open>' in html and "<summary>Queue (15)</summary>" in html
     assert "Send a test message:" in html
     for label in ("Routine question", "Fraud report", "Complaint", "Hostile message"):
         assert f">{label}</button>" in html

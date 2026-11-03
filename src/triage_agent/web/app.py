@@ -165,6 +165,7 @@ def create_app(
             "review.html", "review", msg,
             scenarios=list(scenarios.values()),
             lanes=[(key, title, all_lanes[key]) for key, title, _ in LANES],
+            total=sum(len(v) for v in all_lanes.values()),
             selected=selected,
             ticket=ticket,
             events=events,
