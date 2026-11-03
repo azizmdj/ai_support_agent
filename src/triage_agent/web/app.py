@@ -45,9 +45,14 @@ MESSAGES = {
     "paused": "Triage paused. New tickets go to a person unless a rule escalates them.",
     "resumed": "Triage resumed.",
     "scenario": "New scenario ticket created and triaged.",
+    "message": "Test message created and triaged.",
+    "invalid_message": "Nothing was created. Type 1 to 2000 characters and pick a listed language.",
     "stale": "This draft changed or was already handled. Nothing was sent. Check the current version below.",
     "error": "That action is not allowed for this case. Nothing was sent.",
 }
+
+MAX_MESSAGE_CHARS = 2000
+DEMO_CUSTOMER = {"customer_name": "Demo Customer"}  # fake name, so templates can greet a typed message
 
 LANES = [
     ("urgent", "Urgent", CaseState.ESCALATED),
@@ -105,6 +110,7 @@ def create_app(
     reviewer = reviewer_id or os.environ.get("TRIAGE_REVIEWER", "demo-reviewer")
     lock = threading.Lock()  # one SQLite connection, used by one request at a time
     rotation = {name: 0 for name in scenarios}
+    languages = sorted(config.settings.ai_disclosure, key=lambda lang: (lang != "en", lang))  # en first: default
 
     if seed_tickets is not None and not store.list():
         tickets = load_tickets(seed_tickets)
@@ -143,7 +149,7 @@ def create_app(
 
     def page(template: str, name: str, msg: str | None = None, **context) -> HTMLResponse:
         header = dict(page=name, model_label=model_label, config_version=config.version, paused=store.is_paused(),
-                      banner=MESSAGES.get(msg or ""), banner_is_error=msg in {"stale", "error"})
+                      banner=MESSAGES.get(msg or ""), banner_is_error=msg in {"stale", "error", "invalid_message"})
         return HTMLResponse(env.get_template(template).render(**header, **context))
 
     trail_context = dict(threshold=config.settings.confidence_threshold, rule_count=len(config.rules),
@@ -163,6 +169,8 @@ def create_app(
         return page(
             "review.html", "review", msg,
             scenarios=list(scenarios.values()),
+            languages=languages,
+            max_chars=MAX_MESSAGE_CHARS,
             lanes=[(key, title, all_lanes[key]) for key, title, _ in LANES],
             total=sum(len(v) for v in all_lanes.values()),
             selected=selected,
@@ -269,6 +277,11 @@ def create_app(
             gate.set_paused(reviewer, on)
             return go_next("paused" if on else "resumed")
 
+    def create_ticket(ticket_id: str, language: str, text: str, metadata: dict[str, str]) -> Case:
+        """One path for every test message: build the ticket and run it through the pipeline."""
+        ticket = Ticket(id=ticket_id, received_at=now(), language=language, text=text, metadata=metadata)
+        return pipeline.process(ticket)
+
     @app.post("/scenarios/{name}")
     def run_scenario(name: str):
         scenario = scenarios.get(name)
@@ -277,14 +290,18 @@ def create_app(
         with lock:
             variant = scenario.variants[rotation[name] % len(scenario.variants)]
             rotation[name] += 1
-            ticket = Ticket(
-                id=f"S-{name}-{uuid.uuid4().hex[:6]}",
-                received_at=now(),
-                language=variant.language,
-                text=variant.text,
-                metadata=variant.metadata,
-            )
-            case = pipeline.process(ticket)
+            case = create_ticket(f"S-{name}-{uuid.uuid4().hex[:6]}", variant.language, variant.text, variant.metadata)
             return back(case.id, "scenario")
+
+    @app.post("/messages")
+    def send_message(text: str = Form(""), language: str = Form("")):
+        """A typed test message. Checked here, not by Form limits, so a bad input gets a banner, not a 422.
+        The text never goes into a URL; the redirect carries only a message key."""
+        text = normalize_newlines(text).strip()
+        if not 1 <= len(text) <= MAX_MESSAGE_CHARS or language not in languages:
+            return RedirectResponse("/new?msg=invalid_message", status_code=303)
+        with lock:
+            case = create_ticket(f"M-{uuid.uuid4().hex[:6]}", language, text, dict(DEMO_CUSTOMER))
+            return back(case.id, "message")
 
     return app

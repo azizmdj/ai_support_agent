@@ -45,11 +45,22 @@
     {% if not selected %}
       <div class="home">
         <p>{% if not total %}Queue is empty. {% endif %}Send a test message to see <a href="/system#flow">how a ticket moves</a>.</p>
-        <form class="send" method="post" action="/scenarios/{{ scenarios[0].id }}" aria-label="Send a test message">
-          {% for s in scenarios %}
-            <button type="submit" class="pill" formaction="/scenarios/{{ s.id }}">{{ s.label }}</button>
-          {% endfor %}
+        <form class="composer" method="post" action="/messages" aria-label="Send a test message">
+          <div class="composer-box">
+            <input type="text" name="text" placeholder="Send a test message..." aria-label="Test message"
+                   maxlength="{{ max_chars }}" required autocomplete="off">
+            <select name="language" aria-label="Language">
+              {% for lang in languages %}<option value="{{ lang }}">{{ lang }}</option>{% endfor %}
+            </select>
+            <button type="submit" class="send-button">Send</button>
+          </div>
+          <div class="send">
+            {% for s in scenarios %}
+              <button type="submit" class="pill" formaction="/scenarios/{{ s.id }}" formnovalidate>{{ s.label }}</button>
+            {% endfor %}
+          </div>
         </form>
+        <p class="hint">Synthetic data only. Don't type real personal data. Names and addresses are not masked.</p>
       </div>
     {% else %}
       {% set c = selected %}

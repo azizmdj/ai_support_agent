@@ -85,7 +85,14 @@ th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(-
 .pill:hover, .pill:focus { border-color: var(--border-strong); }
 .home { padding: 22vh 0 3rem; text-align: center; }
 .home p { margin: 0 0 1.25rem; font-size: 1.1rem; }
-.home .send { justify-content: center; margin: 0; }
+.home .send { justify-content: center; margin: 0 0 1rem; }
+.home .hint { margin: 0; font-size: .85rem; }
+.composer { margin: 0 0 .75rem; text-align: left; }
+.composer-box { display: flex; gap: .5rem; align-items: center; margin: 0 0 1rem; padding: .4rem .4rem .4rem .9rem; border: 1px solid var(--border-strong); border-radius: 14px; background: var(--surface); }
+.composer-box:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.composer-box input { flex: 1 1 auto; min-width: 0; padding: .45rem 0; border: 0; outline: 0; font: inherit; background: transparent; color: var(--text); }
+.composer-box select { flex: none; }
+.send-button { flex: none; border-radius: 10px; }
 .new[aria-current="page"] { background: var(--surface-2); }
 
 /* Decision card: message, Steps (collapsed), draft, one primary button, "Something wrong?" */
@@ -146,4 +153,5 @@ summary { cursor: pointer; }
   .queue > summary { display: list-item; margin-bottom: .5rem; }
   .sidebar > .status { margin-top: 0; }
   .main { padding-top: 1.25rem; }
+  .home { padding: 2rem 0; }
 }

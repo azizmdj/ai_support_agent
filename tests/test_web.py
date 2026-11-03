@@ -410,3 +410,101 @@ def test_web_layer_never_calls_send_reply():
     for path in web.rglob("*"):
         if path.suffix in {".py", ".html", ".css"}:
             assert "send_reply" not in path.read_text(encoding="utf-8"), path
+
+
+# --- Free-text composer (only on /new) ----------------------------------------------------------
+def typed(console, text, language="en"):
+    location = console.post("/messages", text=text, language=language)
+    case_id = re.match(r"/cases/([^?]+)\?msg=message$", location).group(1)
+    return console.store.get(case_id)
+
+
+def composer(html):
+    return html.split('<form class="composer"', 1)[1].split("</form>", 1)[0]
+
+
+def test_typed_messages_land_in_the_right_lane(empty_console):
+    c = empty_console
+    fraud = typed(c, "Someone made a payment I did not make. I think it is fraud.")
+    routine = typed(c, "How do I download my invoice for October?")
+    assert fraud.ticket_id.startswith("M-") and routine.ticket_id.startswith("M-")
+    assert (fraud.state, fraud.rule_id) == (CaseState.ESCALATED, "fraud_keywords") and fraud.draft is None
+    assert routine.state == CaseState.DRAFTED and "Demo Customer" in routine.draft  # the fixed fake name
+    assert c.store.get_ticket(routine.ticket_id).metadata == {"customer_name": "Demo Customer"}
+    html = c.client.get("/new").text
+    assert lane_of(html, fraud.ticket_id) == "urgent" and lane_of(html, routine.ticket_id) == "ready"
+    assert "Test message created and triaged." in c.client.get(f"/cases/{routine.id}?msg=message").text
+    assert c.sent == []
+
+
+def test_typed_message_with_a_missing_field_needs_a_person(empty_console):
+    case = typed(empty_console, "I lost my card on the train, it may have been stolen.")
+    assert case.state == CaseState.NEEDS_PERSON and case.draft is None
+    assert "missing field card_last4" in case.reason  # only the name is filled in; card_last4 is not invented
+
+
+@pytest.mark.parametrize("text,language", [
+    ("", "en"), ("   \n\t  ", "en"), ("x" * 2001, "en"), ("How do I get my invoice?", "fr"),
+    ("How do I get my invoice?", ""), ("How do I get my invoice?", "<script>"),
+])
+def test_bad_typed_input_creates_nothing(empty_console, text, language):
+    c = empty_console
+    before = c.audit_count()
+    assert c.post("/messages", text=text, language=language) == "/new?msg=invalid_message"
+    assert c.store.list() == [] and c.audit_count() == before
+    assert "Not done:</strong> Nothing was created." in c.client.get("/new?msg=invalid_message").text
+
+
+def test_typed_text_limits_and_missing_fields(empty_console):
+    c = empty_console
+    assert c.client.post("/messages", data={}).headers["location"] == "/new?msg=invalid_message"  # not a 422
+    exact = typed(c, "  " + "a" * 1990 + " fraud  ")  # trimmed to 1996 characters, within the limit
+    assert c.store.get_ticket(exact.ticket_id).text == "a" * 1990 + " fraud"
+    crlf = typed(c, "How do I get my invoice?\r\nThanks", language="de")
+    assert c.store.get_ticket(crlf.ticket_id).text == "How do I get my invoice?\nThanks" and crlf.language == "de"
+
+
+def test_get_messages_is_not_allowed(empty_console):
+    assert empty_console.client.get("/messages").status_code == 405
+    assert empty_console.store.list() == []
+
+
+def test_typed_text_is_escaped_and_never_audited_or_in_a_url(empty_console):
+    c = empty_console
+    marker = "zq-marker-7f3"
+    text = f"<script>alert(4)</script> how do i pay {marker}"
+    location = c.post("/messages", text=text, language="en")
+    assert marker not in location and "script" not in location
+    case = c.store.get(re.match(r"/cases/([^?]+)", location).group(1))
+    html = c.client.get(location).text
+    assert "<script>alert(4)</script>" not in html and "&lt;script&gt;alert(4)&lt;/script&gt;" in html
+    rows = c.app.state.store.conn.execute("SELECT payload_json FROM audit").fetchall()
+    assert rows and not any(marker in r[0] or "alert(4)" in r[0] for r in rows)
+    assert [e.event for e in c.audit.events(case.id)][0] == "received"
+
+
+def test_composer_markup_on_new(console):
+    html = console.client.get("/new").text
+    form = composer(html)
+    submits = re.findall(r"<button[^>]*>", form)
+    assert len(submits) == 5 and ">Send</button>" in form
+    assert submits[0] == '<button type="submit" class="send-button">'  # Enter triggers Send, not a pill
+    assert all("formnovalidate" in b and 'class="pill"' in b for b in submits[1:])
+    assert 'class="primary"' not in html  # no card, so no primary button
+    assert 'placeholder="Send a test message..."' in form and 'maxlength="2000"' in form and "required" in form
+    options = re.findall(r'<option value="([^"]+)">', form)
+    assert options[0] == "en" and set(options) == set(console.app.state.config.settings.ai_disclosure)
+    assert "Synthetic data only. Don't type real personal data. Names and addresses are not masked." in html
+    assert "<article" not in html
+
+
+def test_composer_is_absent_on_case_pages(console):
+    for case in console.store.list():
+        html = console.client.get(f"/cases/{case.id}").text
+        assert 'action="/messages"' not in html and "Send a test message..." not in html
+
+
+def test_css_has_dark_mode_and_no_external_resources(console):
+    css = console.client.get("/static/style.css").text
+    assert "@media (prefers-color-scheme: dark)" in css
+    assert "url(" not in css and "@import" not in css and "@keyframes" not in css and "transition" not in css
