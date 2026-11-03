@@ -11,7 +11,7 @@ Oct 31, 2026 · @Aziz M
 | 3a | Built | Model providers (OpenAI-compatible and Anthropic adapters), PII masking, fallback chain, `classify` command |
 | 3b | Built | 100 synthetic tickets with seeded fake PII, the `eval` command and metrics including PII leak rate and injection resistance, a live run with gpt-4o-mini |
 | 4 | Built | Dockerfile, docker-compose, health endpoint, CI with ruff and pytest, full README. The hosted demo is dropped (see Decisions) |
-| 5 | Built | Clean-up (the `demo` command and the unused `route` rule action are gone), a read-only System page, a simpler decision card, model hyperparameters in `pack/models.yaml`. 240 tests in total (239 passed, 1 expected failure) |
+| 5 | Built | Clean-up (the `demo` command and the unused `route` rule action are gone), a read-only System page, a simpler decision card, model hyperparameters in `pack/models.yaml`. 255 tests in total (254 passed, 1 expected failure) |
 
 ## Problem
 
@@ -229,7 +229,7 @@ Everything on the System page is derived from the loaded config at request time,
 **Left out on purpose**
 
 - An editing UI for the config. The System page only shows the config. Classes, rules, templates and settings are edited as files, because config belongs in git with review before merge.
-- A customer-facing chat window, which is a different product with different risks.
+- A customer-facing chat window, which is a different product with different risks. The New message text box is a test input for the demo, not a customer-facing chat.
 - Dashboards and a done-today history.
 - An automatic instant acknowledgment for fraud reports. It would send something without approval, so it is an open question for Finom.
 
