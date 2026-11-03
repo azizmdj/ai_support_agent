@@ -36,7 +36,6 @@
         <span>Pause: <strong>{{ "ON" if paused else "OFF" }}</strong></span>
         <button type="submit">{{ "Resume" if paused else "Pause" }}</button>
       </form>
-      <p><a href="/system">System</a></p>
     </div>
   </aside>
 
@@ -118,7 +117,7 @@
           <p class="note">No draft. Pick the right class to create one.</p>
           <form method="post" action="/cases/{{ c.id }}/class" class="inline act">
             <label for="set_class">Class:</label>
-            <select id="set_class" name="new_class">{% for cls in classes %}<option value="{{ cls.name }}">{{ cls.name }}{% if cls.risk == "locked" %} (locked, escalates){% endif %}</option>{% endfor %}</select>
+            <select id="set_class" name="new_class" required><option value="" disabled selected>Choose a class...</option>{% for cls in classes %}<option value="{{ cls.name }}">{{ cls.name }}{% if cls.risk == "locked" %} (locked, escalates){% endif %}</option>{% endfor %}</select>
             <button type="submit" class="primary">Set class and draft</button>
           </form>
         {% else %}
