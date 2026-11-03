@@ -32,7 +32,7 @@ from ..providers.registry import build_llm
 from ..store import CaseNotFound, SQLiteCaseStore, connect
 from ..ticket_source import MockTicketSource, load_tickets
 from . import system
-from .journey import Context, generic_journey, journey
+from .journey import Context, journey
 
 HERE = Path(__file__).parent
 
@@ -155,16 +155,16 @@ def create_app(
         ticket = store.get_ticket(selected.ticket_id) if selected else None
         all_lanes = lanes()
         events = audit.events(selected.id) if selected else []
+        steps = []
         if selected:
             model_called = any(e.event in {"classified", "model_error"} for e in events)
             masked = masked_view(ticket.text) if model_called else None
             steps = journey(selected, events, Context(masked=masked, **trail_context))
-        else:
-            steps = generic_journey()
         return page(
             "review.html", "review", msg,
             scenarios=list(scenarios.values()),
             lanes=[(key, title, all_lanes[key]) for key, title, _ in LANES],
+            total=sum(len(v) for v in all_lanes.values()),
             selected=selected,
             ticket=ticket,
             events=events,

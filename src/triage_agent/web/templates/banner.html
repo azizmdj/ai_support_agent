@@ -1,0 +1,5 @@
+{% if banner %}
+  <p class="banner {{ 'banner-error' if banner_is_error else 'banner-ok' }}" role="status">
+    <strong>{{ 'Not done:' if banner_is_error else 'Done:' }}</strong> {{ banner }}
+  </p>
+{% endif %}

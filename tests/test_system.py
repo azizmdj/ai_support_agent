@@ -23,6 +23,7 @@ def test_system_page_shows_flow_settings_and_business_rules(pack):
     assert "Fraud and complaint classes are locked" in html
     assert html.count("<details>") == 3 and "<details open" not in html  # Explain sections start closed
     assert "<form" not in html.split("</header>", 1)[1]  # read-only: no forms below the header
+    assert 'class="sidebar"' not in html and "Pause: <strong>OFF</strong>" in html  # status as text, no switch
 
 
 def test_system_page_follows_the_pack_after_a_restart(pack):

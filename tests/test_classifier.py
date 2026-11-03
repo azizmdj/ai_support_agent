@@ -322,7 +322,7 @@ def test_details_show_masked_message():
     app = create_app(db_path=":memory:", seed_tickets=None)
     case = app.state.pipeline.process(ticket("Fees? IBAN DE89 3704 0044 0532 0130 00, mail a.b@example.org", id="M1"))
     html = TestClient(app).get(f"/cases/{case.id}").text
-    details = html.split('<details class="details">', 1)[1]
+    details = html.split('<details class="steps">', 1)[1]
     classify_row = details.split("<td>3. Classify</td>", 1)[1].split("</tr>", 1)[0]
     assert "the masked message: Fees? IBAN &lt;IBAN_1&gt;, mail &lt;EMAIL_1&gt;" in classify_row
     assert "DE89 3704" not in details
