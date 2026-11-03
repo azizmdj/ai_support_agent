@@ -1,14 +1,11 @@
-<section class="journey" aria-label="Ticket journey">
-  <h2>{{ "How a ticket moves" if generic else "Journey of this ticket" }}</h2>
-  <ol class="trail">
-    {% for s in steps %}
-      {% set key = s.status|lower|replace(" ", "-") %}
-      <li class="step step-{{ key }}" {% if s.status == "Your turn" %}aria-current="step"{% endif %}>
-        <a class="step-name" href="/system#{{ s.anchor }}">{{ s.number }}. {{ s.name }}</a>
-        <span class="actor">{{ s.actor }}</span>
-        <span class="result">{{ s.result }}</span>
-        <span class="status">Status: <strong>{{ s.status }}</strong></span>
-      </li>
-    {% endfor %}
-  </ol>
-</section>
+<ol class="trail" aria-label="Steps of this ticket">
+  {% for s in steps %}
+    {% set key = s.status|lower|replace(" ", "-") %}
+    <li class="step step-{{ key }}" {% if s.status == "Your turn" %}aria-current="step"{% endif %}>
+      <a class="step-name" href="/system#{{ s.anchor }}">{{ s.number }}. {{ s.name }}</a>
+      <span class="actor">{{ s.actor }}</span>
+      <span class="result">{{ s.result }}</span>
+      <span class="status">Status: <strong>{{ s.status }}</strong></span>
+    </li>
+  {% endfor %}
+</ol>

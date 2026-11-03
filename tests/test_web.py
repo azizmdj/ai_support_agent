@@ -101,7 +101,7 @@ def test_page_renders_lanes_and_header(console):
     assert '<details class="queue" open>' in html and "<summary>Queue (15)</summary>" in html
     assert "Send a test message:" in html
     for label in ("Routine question", "Fraud report", "Complaint", "Hostile message"):
-        assert f">{label}</button>" in html
+        assert 'class="pill" formaction="/scenarios/' in html and f">{label}</button>" in html
     for title in ("Urgent", "Ready to approve", "Needs a person"):
         assert title in html
     assert "Urgent <span class=\"count\">(5)</span>" in html
@@ -158,9 +158,26 @@ def test_trail_links_to_system_anchors(console):
     for actor in ("Customer", "Code", "AI", "Reviewer"):
         assert f'<span class="actor">{actor}</span>' in html
     card = html.split('<article class="card', 1)[1]
-    assert card.index("Journey of this ticket") < card.index("Customer message")
-    details = card.split("Details: what each step saw and produced", 1)[1]
-    assert "<summary>Audit log (" in details  # raw rows stay, nested and collapsed
+    # Order: message, collapsed Steps, draft and the one primary button, then "Something wrong?".
+    order = ['class="message"', '<details class="steps">', 'class="draft"', 'class="primary"', "Something wrong?"]
+    assert [card.index(x) for x in order] == sorted(card.index(x) for x in order)
+    steps = card.split('<details class="steps">', 1)[1]
+    summary = steps.split("<summary>", 1)[1].split("</summary>", 1)[0]
+    assert summary.startswith("Steps · ") and summary.endswith(" · Your turn")
+    assert "state <strong>drafted</strong>" in steps and "team " in steps  # the facts live inside Steps
+    assert "What each step saw and produced" in steps and "Names and free-text addresses are not masked." in steps
+    assert "<summary>Audit log (" in steps.split("What each step saw and produced", 1)[1]  # nested, collapsed
+    assert '<details class="steps" open' not in html
+    assert '<p class="entry">' not in html and '<p class="reason">' not in html  # hint and old Why line are gone
+
+
+def test_steps_summary_carries_the_reason_and_status(console):
+    escalated = console.client.get("/cases/case-T03").text
+    assert "<summary>Steps · rule fraud_keywords · Your turn</summary>" in escalated
+    case = console.case("T01")
+    console.post(f"/cases/{case.id}/approve", draft_hash=case.draft_hash, body=case.draft)
+    sent = console.client.get(f"/cases/{case.id}").text
+    assert "· No action needed</summary>" in sent and "Status: <strong>Your turn</strong>" not in sent
 
 
 def test_relative_due():
@@ -358,22 +375,16 @@ def test_redirect_goes_urgent_then_ready_then_needs(empty_console):
     assert c.post(f"/cases/{needs.id}/escalate") == f"/cases/{needs.id}?msg=escalated"
     assert c.post(f"/cases/{needs.id}/take") == "/?msg=taken"
     html = c.client.get("/?msg=taken").text
-    assert "Queue is empty." in html and "Try a scenario button above." in html
+    assert "Queue is empty. Send a test message to start." in html
 
 
 def test_empty_queue_page(empty_console):
     html = empty_console.client.get("/").text
-    assert "Queue is empty." in html and "Try a scenario button above." in html
+    main = html.split('<main class="main">', 1)[1]
+    assert "Queue is empty. Send a test message to start." in main
+    assert '<a href="/system#flow">How a ticket moves</a>' in main
+    assert main.count('class="pill"') == 4 and "<article" not in main and 'class="primary"' not in main
     assert "Ready to approve <span class=\"count\">(0)</span>" in html
-    guide = html.split('<ol class="guide">', 1)[1].split("</ol>", 1)[0]
-    assert [line.strip() for line in re.findall(r"<li>(.*?)</li>", guide)] == [
-        "Send a test message above.",
-        "Review the case: the trail shows what happened, step by step.",
-        "Open System to see the rules, settings and the reasoning.",
-    ]
-    assert "How a ticket moves" in html and html.count("Status: <strong>Pending</strong>") == 6
-    for _, _, _, desc in STEPS:
-        assert desc in html
 
 
 # --- Static safety checks ----------------------------------------------------------------------
@@ -382,11 +393,3 @@ def test_web_layer_never_calls_send_reply():
     for path in web.rglob("*"):
         if path.suffix in {".py", ".html", ".css"}:
             assert "send_reply" not in path.read_text(encoding="utf-8"), path
-
-
-def test_entry_hint_with_a_non_empty_queue(console):
-    html = console.client.get("/").text
-    assert console.store.list()
-    hint = html.split("</header>", 1)[1].split('<p class="entry">', 1)[1].split("</p>", 1)[0]
-    assert hint.startswith("Pick a ticket on the left or send a test message.")
-    assert '<a href="/system">System tab</a>' in hint
