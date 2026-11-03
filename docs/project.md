@@ -11,7 +11,7 @@ Oct 31, 2026 · @Aziz M
 | 3a | Built | Model providers (OpenAI-compatible and Anthropic adapters), PII masking, fallback chain, `classify` command |
 | 3b | Built | 100 synthetic tickets with seeded fake PII, the `eval` command and metrics including PII leak rate and injection resistance, a live run with gpt-4o-mini |
 | 4 | Built | Dockerfile, docker-compose, health endpoint, CI with ruff and pytest, full README. The hosted demo is dropped (see Decisions) |
-| 5 | Built | Clean-up (the `demo` command and the unused `route` rule action are gone), a read-only System page, a simpler decision card, model hyperparameters in `pack/models.yaml`. 255 tests in total (254 passed, 1 expected failure) |
+| 5 | Built | Clean-up (the `demo` command and the unused `route` rule action are gone), a read-only System page, a simpler decision card, model hyperparameters in `pack/models.yaml`. The test suite passes in CI |
 
 ## Problem
 
