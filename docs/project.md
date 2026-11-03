@@ -7,7 +7,7 @@ Oct 31, 2026 · @Aziz M
 | Phase | State | What it contains |
 | --- | --- | --- |
 | 1 | Built | Core pipeline, rules, approval gate, audit log, config validator |
-| 2 | Built | Reviewer console, journey trail, scenario buttons, pause switch, escalate, wrong class |
+| 2 | Built | Reviewer console (sidebar queue, collapsed Steps trail, light and dark mode), scenario buttons, pause switch, escalate, wrong class |
 | 3a | Built | Model providers (OpenAI-compatible and Anthropic adapters), PII masking, fallback chain, `classify` command |
 | 3b | Built | 100 synthetic tickets with seeded fake PII, the `eval` command and metrics including PII leak rate and injection resistance, a live run with gpt-4o-mini |
 | 4 | Built | Dockerfile, docker-compose, health endpoint, CI with ruff and pytest, full README. The hosted demo is dropped (see Decisions) |
@@ -51,7 +51,7 @@ The demo shows that a triage agent can be built, evaluated and deployed in a way
 - Swappable adapters for ticket system, model and case store
 - A human approval gate enforced in code, not only in the prompt
 - An audit log of every classification, draft, edit, approval and send
-- A reviewer console: one server-rendered page with plain forms
+- A reviewer console: two server-rendered pages, Review and System, with plain forms
 - A plain Python package with SQLite that runs on a laptop; tests run with the network blocked
 - Real-model support behind swappable adapters, with PII masking before every real-model call
 - An evaluation suite with accuracy, safety and privacy numbers
@@ -159,19 +159,21 @@ The reviewer console is the product: customers only see the reply, so the review
 
 **Header**
 
-The header shows the app name with "Unofficial demo, synthetic data", the tabs Review and System, a model chip (for example "Model: fake"), which links to the settings on the System page, a chip with the config version, and the pause switch. Nothing else.
+The header shows the app name with "Unofficial demo, synthetic data" and the links Review and System. Nothing else. The model, the config version and the pause switch sit in the Review sidebar.
 
 **Review: one screen, one queue**
 
 &#91;embedded content: reviewer console · one card per ticket\]
 
-A row of four buttons at the top, after "Send a test message:" (Routine question, Fraud report, Complaint, Hostile message), creates a new ticket, runs it through the pipeline and opens its card. Each button rotates between an English and a German variant. Three lanes on the left show the queue, with a count on each:
+The page has a slim sidebar on the left and a centered column of about 720px. The sidebar starts with a "New message" link, then lists the queue in three lanes, each with a count; a row shows the ticket id, the class and the due time. Only the queue scrolls, so the footer stays visible: the model (linked to the settings on System), the config version, the pause state with its switch, and a link to System.
 
 - **Urgent:** escalated cases, sorted by deadline, with a relative due time such as "due in 45m" or "overdue by 5m".
 - **Ready to approve:** drafted cases.
 - **Needs a person:** unclear or low-confidence messages, model errors, paused tickets and drafts blocked by a missing field or language.
 
-Each ticket is one decision card: the journey trail, a one-line reason, the customer message, the draft if there is one, and exactly one primary button.
+Four small buttons at the top of the column, after "Send a test message:" (Routine question, Fraud report, Complaint, Hostile message), create a new ticket, run it through the pipeline and open its card. Each button rotates between an English and a German variant.
+
+Each ticket is one decision card: a line with the ticket id, class and due time, the customer message, a collapsed "Steps" line, the draft if there is one, and exactly one primary button. "Something wrong?" stays collapsed below it.
 
 | Card | Primary button | Inside "Something wrong?" |
 | --- | --- | --- |
@@ -179,15 +181,15 @@ Each ticket is one decision card: the journey trail, a one-line reason, the cust
 | Needs a person | **Set class and draft** | Escalate to a person |
 | Escalated (fraud, complaint) | **Take case** | none |
 
-- After any action the next ticket opens automatically: Urgent first, then Ready, then Needs a person. A one-line banner confirms the action, such as "Reply sent via mock ticket system."
+- After any action the next ticket opens automatically: Urgent first, then Ready, then Needs a person. A one-line banner confirms the action, such as "Done: Reply sent via mock ticket system."
 - Sent and taken cases leave the lanes.
 - A stale form (the draft changed since the page loaded) is rejected with a clear message, and nothing is sent.
-- A line under the header always says where to start: pick a ticket or send a test message, read the trail, and find rules, settings and explanations on the System tab.
-- An empty queue also shows a three-line guide (send a test message; review the case with the trail; open System) and the trail in a generic version.
+- An empty queue shows one line, the four test-message buttons and a link "How a ticket moves" to the flow on the System page.
+- On a phone the sidebar sits above the card, and the queue is a section "Queue (n)" that is open by default and can be folded away.
 
 **Journey trail**
 
-The top of each card shows the ticket's path as six steps in a strip that wraps on narrow screens. Each step name links to its row on the System page.
+The "Steps" line on each card is collapsed by default. Its summary carries the reason and whether action is needed, for example "Steps · rule fraud_keywords · Your turn". Opened, it lists the six steps, one line each, and each step name links to its row on the System page.
 
 | Step | Actor | Example result |
 | --- | --- | --- |
@@ -200,28 +202,28 @@ The top of each card shows the ticket's path as six steps in a strip that wraps 
 
 Each step has a written status: Done, Skipped, Your turn or Pending. The trail is built only from the case, its audit rows and the loaded config, so it adds no new storage.
 
-A collapsed **Details** section shows "What each step saw and produced": one row per step with its input, output and the config used. For Classify the input is the masked message, computed from the stored ticket when the page loads and never stored, and the config is the model, its temperature and the threshold. The raw audit rows sit in a nested, collapsed "Audit log".
+Below the steps, the same section shows the case facts (state, class, priority, team, due time) and "What each step saw and produced": one row per step with its input, output and the config used. For Classify the input is the masked message, computed from the stored ticket when the page loads and never stored, and the config is the model, its temperature and the threshold. The raw audit rows sit in a nested, collapsed "Audit log".
 
 **System: read-only**
 
-Everything on the System page is derived from the loaded config at request time, so an edit to a pack file shows up after a restart.
+Everything on the System page is derived from the loaded config at request time, so an edit to a pack file shows up after a restart. The page has no sidebar and no form, a column of about 960px, and a one-line status with the model, config version and pause state. Wide tables scroll sideways.
 
-- **Flow:** the six steps as a table: who does it, what it does, input and output, and which file or setting controls it. Each step has an anchor (`#rules`, `#classify`, `#template`, `#review`, `#reply`).
+- **Flow:** the six steps as a table, always open: who does it, what it does, input and output, and which file or setting controls it. Each step has an anchor (`#rules`, `#classify`, `#template`, `#review`, `#reply`).
 - **Settings** (`#settings`): the config version, the pause state, the confidence threshold, the deadline for unclear tickets, the reviewer id, and the provider chain with kind, model, host, temperature, max_tokens, timeout and the key variable name with "set" or "not set". A key value is never shown.
 - **Business rules:** the classes (priority, team, deadline, risk, draft mode, number of templates, languages) and the rules (action, target class, number of keywords, languages).
 - **Explain:** three collapsed sections: Business (the three costly mistakes and what prevents each), Math (the decision rule and metric definitions, see "How to read the numbers") and Engineering (interfaces, case states, audit, fail-closed paths, how to add a class or a model).
 
 **Trust features**
 
-- A one-line reason on every card: the rule that fired, or the model's class and confidence.
+- A reason on every card, in the Steps summary: the rule that fired, or the model's class and confidence.
 - The journey trail and the step table, so a first-time visitor sees who did what with which input.
 - Wrong class is one click and doubles as labeled feedback: a `class_corrected` audit row with the old and new class.
-- A pause switch in the header. While it is on, rules still run and fraud still escalates, the LLM is not called, and everything else goes to Needs a person with the reason "paused". Switching it writes a `pause_on` or `pause_off` audit row.
-- State is always written as text, never shown by color alone. System fonts, no icons, no animation, no JavaScript.
+- A pause switch in the sidebar footer. While it is on, rules still run and fraud still escalates, the LLM is not called, and everything else goes to Needs a person with the reason "paused". Switching it writes a `pause_on` or `pause_off` audit row.
+- State is always written as text, never shown by color alone. System fonts, light and dark mode from the system setting, no icons, no animation, no JavaScript.
 
 **Demo experience**
 
-`docker compose up --build` or `uv run python -m triage_agent serve` starts the console at http://127.0.0.1:8000. On first start with an empty database it loads the 15 fixture tickets, shifted in time so the newest arrives "just now". A reviewer sends a test message, follows the trail, and opens System to see why. That shows flexibility, banking fit and safety in two minutes without typing anything.
+`docker compose up --build` or `uv run python -m triage_agent serve` starts the console at http://127.0.0.1:8000. On first start with an empty database it loads the 15 fixture tickets, shifted in time so the newest arrives "just now". A reviewer clicks a test-message button, opens "Steps" on the card to follow the trail, and opens System to see why. That shows flexibility, banking fit and safety in two minutes.
 
 **Left out on purpose**
 
@@ -487,7 +489,7 @@ These run in CI on every push to `main` and on every pull request, and locally w
 | Pause switch | While paused, fraud still escalates, everything else goes to a person, and the model is not called | Built |
 | System page | Shows the flow, settings and rules from the loaded pack and follows a changed pack after a restart; shows whether a key variable is set but never its value; GET changes nothing; config text is escaped | Built |
 | Packaging | `/health` returns ok and the provider ids without state change or secrets; compose passes the key variables by name only; the Dockerfile copies only existing paths | Built |
-| Reviewer console | Scenarios land in the right lane; approve, edit, stale draft, escalate and wrong class behave and log correctly; exactly one primary button per card; trail steps link to System; GET never changes state; customer text is escaped | Built |
+| Reviewer console | Scenarios land in the right lane; approve, edit, stale draft, escalate and wrong class behave and log correctly; exactly one primary button per card; the card order is message, collapsed Steps, draft, primary button; trail steps link to System; the header holds no controls and the pause switch sits in the sidebar; GET never changes state; customer text is escaped | Built |
 
 Shorter unit tests cover config validation, template filling (a missing field or language blocks the draft), audit-log fields and config version, the model-down path, invalid model output, deadlines, the journey trail and the no-network guard. Storage tests on Postgres are (not built). CI also runs the ruff linter. A run with the real model on demand is the `classify` command.
 
@@ -503,7 +505,8 @@ Shorter unit tests cover config validation, template filling (a missing field or
 - **A two-issue ticket gets one label.** If the model is unsure between topics, low confidence sends it to a person.
 - **`config_version`** is the first 12 characters of a sha256 over all pack files, with line endings normalized.
 - **Pause lets only escalate rules through.** The LLM is not called while paused.
-- **The console is plain server-rendered forms:** no JavaScript, one fixed reviewer id.
+- **The console is plain server-rendered forms:** no JavaScript, one fixed reviewer id, one CSS file with color variables for light and dark mode.
+- **Free-text composer (planned, part 2):** a reviewer may type a test message of at most 2,000 characters. Code adds a fixed fake customer name so a draft can be filled, and a hint says to use synthetic data only, because names are not masked.
 - **Masking over-masks and needs no checksum.** A mistyped IBAN is masked too; a harmless number may be masked as well.
 - **Adapters only send text.** The prompt, the parsing and the validation live once in the core, so a new provider is a small HTTP adapter.
 - **The Anthropic adapter sends no `temperature`,** because API version `2026-10-21` rejects sampling parameters. It is tested with mocked HTTP only.

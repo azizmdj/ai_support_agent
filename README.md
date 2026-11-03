@@ -8,7 +8,7 @@ Code rules run first, a model only classifies, replies come from approved templa
 
 1. `docker compose up --build`
 2. Open http://127.0.0.1:8000
-3. Click a "Send a test message" button and follow the trail on the card.
+3. Click a "Send a test message" button, then open "Steps" on the card to follow the trail.
 
 Without Docker, with [uv](https://docs.astral.sh/uv/) (offline, fake model, no keys):
 
