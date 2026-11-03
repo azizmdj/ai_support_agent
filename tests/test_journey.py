@@ -2,7 +2,7 @@ from conftest import ticket
 
 from triage_agent.llm import FakeLLM
 from triage_agent.models import ClassifierResult
-from triage_agent.web.journey import STEPS, generic_journey, journey
+from triage_agent.web.journey import STEPS, journey
 
 DONE, SKIPPED, TURN, PENDING = "Done", "Skipped", "Your turn", "Pending"
 
@@ -154,12 +154,6 @@ def test_class_correction_is_shown(make_env, config):
     assert steps[2][0] == "unclear 0.30 (low confidence); corrected to general_question by rev-5"
     assert steps[3] == ("general_question_reply", DONE)
     assert steps[4][1] == TURN
-
-
-def test_generic_journey():
-    steps = generic_journey()
-    assert [s.status for s in steps] == [PENDING] * 6
-    assert all(s.result for s in steps)
 
 
 def test_steps_carry_input_and_config(make_env):

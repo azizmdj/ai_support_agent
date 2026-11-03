@@ -11,7 +11,7 @@ from ..models import Case, CaseState
 
 DONE, SKIPPED, YOUR_TURN, PENDING = "Done", "Skipped", "Your turn", "Pending"
 
-# (name, anchor on /system, actor, one-line description for the generic strip)
+# (name, anchor on /system, actor, one-line description)
 STEPS = [
     ("Message received", "received", "Customer", "A customer writes to the bank."),
     ("Rules", "rules", "Code", "Keyword rules catch fraud and complaints first."),
@@ -51,10 +51,6 @@ class Context:
     chain: str = ""
     masked: str | None = None  # computed on the fly from the stored ticket, never stored
     reviewer: str = ""
-
-
-def generic_journey() -> list[Step]:
-    return [Step(i, name, anchor, actor, desc, PENDING) for i, (name, anchor, actor, desc) in enumerate(STEPS, 1)]
 
 
 def _step(number: int, result: str, status: str, input: str = "", config: str = "") -> Step:
