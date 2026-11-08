@@ -606,22 +606,25 @@ def ai_box(html):
 def test_ai_box_for_a_drafted_case(console):
     box = ai_box(console.client.get("/cases/case-T01").text)
     assert "The AI picked a class with enough confidence." in box
-    assert "<dt>Predicted class</dt><dd>fee question</dd>" in box
-    assert "<dt>Confidence</dt><dd>0.90, needs 0.70</dd>" in box
-    assert "<dt>Answered by</dt>" in box  # the injected test double has no provider id; see the next test
-    assert "<dt>The model saw</dt><dd>Hi, which fees apply to my account?" in box
+    assert '<span class="k">Predicted class:</span> fee question</span>' in box
+    assert '<span class="k">Confidence:</span> 0.90, needs 0.70</span>' in box
+    assert '<span class="k">Answered by:</span>' in box  # the injected test double has no provider id; see the next test
+    assert '<p class="ai-row"><span class="k">The model saw:</span> Hi, which fees apply to my account?' in box
+    assert '<span class="ai-title">AI decision</span>' in box and "<h2>" not in box  # compact: no heading block
 
 
 def test_ai_box_names_the_provider_from_the_chain():
     app = create_app(db_path=":memory:", reviewer_id=REVIEWER, now=lambda: NOW)  # default chain: fake
     box = ai_box(TestClient(app).get("/cases/case-T01").text)
-    assert "<dt>Answered by</dt><dd>test model (no real AI)</dd>" in box
+    assert '<span class="k">Answered by:</span> test model (no real AI)</span>' in box
 
 
 def test_ai_box_for_a_rule_case_names_the_config_keyword(console):
     box = ai_box(console.client.get("/cases/case-T04").text)  # "BETRUG!!! ..."
     assert 'No AI call: rule fraud_keywords fired on the keyword &#34;betrug&#34; from pack/rules.yaml.' in box
-    assert "<dl>" not in box  # one line, no model rows
+    assert "ai-facts" not in box and "ai-row" not in box  # one line, no model rows
+    steps = console.client.get("/cases/case-T04").text.split('<details class="steps">', 1)[1]
+    assert 'rule fraud_keywords fired on the keyword &#34;betrug&#34;</span>' in steps  # Step 2 of the trail too
     regex = console.app.state.pipeline.process(ticket("I did not authorize this payment", id="RX"))
     box = ai_box(console.client.get(f"/cases/{regex.id}").text)
     assert r"on the pattern &#34;re:\bdid not (make|authori[sz]e)\b&#34;" in box
@@ -632,7 +635,8 @@ def test_ai_box_keeps_the_predicted_class_for_low_confidence(empty_console):
     assert (case.class_name, case.predicted_class) == ("unclear", "pending_transfer")
     box = ai_box(empty_console.client.get(f"/cases/{case.id}").text)
     assert "The AI was not sure enough, so a person decides." in box
-    assert "<dt>Predicted class</dt><dd>pending transfer</dd>" in box and "<dd>0.50, needs 0.70</dd>" in box
+    assert '<span class="k">Predicted class:</span> pending transfer</span>' in box
+    assert '<span class="k">Confidence:</span> 0.50, needs 0.70</span>' in box
 
 
 def test_ai_box_without_a_model_call(empty_console):
@@ -666,7 +670,7 @@ def test_model_explanation_is_shown_truncated_and_never_audited(empty_console):
     case = typed(c, "How do I get my invoice?")
     assert case.model_explanation.startswith(marker) and len(case.model_explanation) == 300
     box = ai_box(c.client.get(f"/cases/{case.id}").text)
-    assert f"<dt>Model&#39;s explanation (unverified)</dt><dd>{marker} " in box
+    assert f'<span class="k">Model&#39;s explanation (unverified):</span> {marker} ' in box
     rows = c.app.state.store.conn.execute("SELECT payload_json FROM audit").fetchall()
     assert rows and not any(marker in r[0] for r in rows)
     assert marker not in case.draft  # never used in a reply
@@ -727,3 +731,29 @@ def test_monitor_recent_audit_events_are_newest_first_and_hold_no_text(empty_con
     assert len(rows) == min(20, c.audit_count())
     assert audit.index("pause_on") < audit.index("received")  # newest first
     assert marker not in html
+
+
+def test_ai_box_says_when_a_confident_class_is_blocked_by_a_missing_field(console):
+    box = ai_box(console.client.get("/cases/case-T09").text)
+    assert ("The AI picked a class with enough confidence, but a required detail is missing (card_last4), "
+            "so no draft was made.") in box
+    assert "The AI picked a class with enough confidence." not in box
+    # After a reviewer changes the class, the box goes back to the plain model summary.
+    console.post("/cases/case-T09/class", new_class="card_blocked")
+    assert "but a required detail is missing" not in ai_box(console.client.get("/cases/case-T09").text)
+
+
+def test_ai_box_shortens_long_masked_text(empty_console):
+    case = typed(empty_console, "How do I get my invoice? " + "please " * 60)
+    html = empty_console.client.get(f"/cases/{case.id}").text
+    assert "… (full text under How this was decided)" in ai_box(html)
+    assert "please " * 59 + "please" in html.split('<details class="steps">', 1)[1]  # the full masked text is still shown
+
+
+def test_sidebar_footer_text_wraps(console):
+    css = console.client.get("/static/style.css").text
+    # The trail's nowrap rule must not match the sidebar footer <div class="status">.
+    assert "\n.status { white-space: nowrap; }" not in css and ".step .status { white-space: nowrap; }" in css
+    footer = css.split(".sidebar > .status {", 1)[1].split("}", 1)[0]
+    assert "white-space: normal" in footer and "min-width: 0" in footer
+    assert "grid-template-columns: 17rem minmax(0, 1fr)" in css

@@ -62,12 +62,12 @@
         <blockquote class="message" aria-label="Customer message">{{ ticket.text }}</blockquote>
 
         <section class="ai-box" aria-label="AI decision">
-          <h2>AI decision</h2>
-          <p>{{ ai.summary }}</p>
-          {% if ai.rows %}
-            <dl>{% for label, value in ai.rows %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
-            <p class="hint">IBANs, card numbers, emails and phone numbers are replaced before the call. Names and addresses are not.</p>
+          <p class="ai-summary"><span class="ai-title">AI decision</span> {{ ai.summary }}</p>
+          {% if ai.facts %}
+            <p class="ai-facts">{% for label, value in ai.facts %}<span><span class="k">{{ label }}:</span> {{ value }}</span>{% endfor %}</p>
           {% endif %}
+          {% for label, value in ai.rows %}<p class="ai-row"><span class="k">{{ label }}:</span> {{ value }}</p>{% endfor %}
+          {% if ai.model_called %}<p class="hint">Masked before the call: IBAN, card, email, phone. Not names or addresses.</p>{% endif %}
         </section>
 
         <details class="steps">
@@ -106,7 +106,7 @@
         {% if c.state.value == "drafted" %}
           <form method="post" action="/cases/{{ c.id }}/approve" class="draft">
             <label for="body">Draft reply <span class="hint">(template {{ c.template_id }}{% if c.edited %}, edited{% endif %}; edit if needed)</span></label>
-            <textarea id="body" name="body" rows="12">{{ c.draft }}</textarea>
+            <textarea id="body" name="body" rows="8">{{ c.draft }}</textarea>
             <input type="hidden" name="draft_hash" value="{{ c.draft_hash }}">
             <button type="submit" class="primary">Approve and send</button>
           </form>

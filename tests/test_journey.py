@@ -25,7 +25,7 @@ def test_fraud_rule_case(make_env):
     steps = trail(env, case.id)
     assert steps[0] == ("received 2026-11-02 09:00 UTC", DONE)
     assert steps[1:] == [
-        ("rule fraud_keywords fired", DONE),
+        ('rule fraud_keywords fired on the keyword "fraud"', DONE),
         ("skipped: rule fired", SKIPPED),
         ("no draft: rule fraud_keywords fired", SKIPPED),
         ("escalated: waiting for Take case", TURN),
@@ -89,7 +89,8 @@ def test_paused_fraud_still_shows_rule(make_env):
     env = make_env()
     env.store.set_paused(True)
     case = env.run(ticket("Betrug!", language="de"))
-    assert trail(env, case.id)[1:3] == [("rule fraud_keywords fired", DONE), ("skipped: rule fired", SKIPPED)]
+    assert trail(env, case.id)[1:3] == [('rule fraud_keywords fired on the keyword "betrug"', DONE),
+                                        ("skipped: rule fired", SKIPPED)]
 
 
 def test_model_error_case(make_env):
@@ -194,4 +195,4 @@ def test_ai_decision_lines_without_a_usable_model_answer(make_env):
     case = env.run(ticket("Which fees apply?", id="X2"))
     ai = ai_decision(env.store.get(case.id), env.audit.events(case.id), Context(chain="a -> b", masked="m"))
     assert ai.summary == "The AI call failed (provider_error), so a person decides."
-    assert ai.rows == [("The model saw", "m"), ("Models tried", "a -> b")]
+    assert ai.rows == [("The model saw", "m")] and ai.facts == [("Models tried", "a -> b")]

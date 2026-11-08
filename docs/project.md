@@ -192,7 +192,7 @@ The page has a slim sidebar on the left and a centered column of about 720px. Th
 
 Each ticket is one decision card, in this order: a line with the ticket id, class and due time; the customer message; the **AI decision** box; a collapsed "How this was decided" section; the draft if there is one; exactly one primary button; and the collapsed secondary actions.
 
-The **AI decision** box is always visible and short. When the model was called it shows the masked text the model saw, the predicted class, the confidence next to the threshold ("0.90, needs 0.70"), which model answered, and the model's own explanation marked "unverified". A low-confidence case keeps its predicted class here, although its class is `unclear`. When no model was called it says why in one line: the rule and the keyword or pattern from `pack/rules.yaml` that fired, the pause switch, or a masking failure.
+The **AI decision** box is always visible and compact, so the draft and the main button fit on a laptop screen without scrolling. When the model was called it shows a one-line summary; the predicted class, the confidence next to the threshold ("0.90, needs 0.70") and which model answered on one line; the masked text the model saw (the first 160 characters; the full text is under "How this was decided"); and the model's own explanation marked "unverified". A low-confidence case keeps its predicted class here, although its class is `unclear`. When the model was confident but the draft was blocked, the summary says so: "The AI picked a class with enough confidence, but a required detail is missing (card_last4), so no draft was made." When no model was called it says why in one line: the rule and the keyword or pattern from `pack/rules.yaml` that fired, the pause switch, or a masking failure.
 
 | Card | Primary button | Secondary actions |
 | --- | --- | --- |
@@ -215,7 +215,7 @@ This section on each card is collapsed by default. Its summary carries the reaso
 | Step | Actor | Example result |
 | --- | --- | --- |
 | 1. Message received | Customer | received time |
-| 2. Rules | Code | "rule fraud_keywords fired", "no rule matched", "held: paused" |
+| 2. Rules | Code | "rule fraud_keywords fired on the keyword "betrug"", "no rule matched", "held: paused" |
 | 3. Classify | AI | "fee_question 0.90 via openai_main", "skipped: rule fired", "failed: model error", "failed: masking failed, no model call" |
 | 4. Template | Code | template id, "no draft: missing card_last4", or "no draft: rule fraud_keywords fired" |
 | 5. Review | Reviewer | "approved by …", "taken by …", or waiting |
