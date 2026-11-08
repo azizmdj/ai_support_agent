@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 import triage_agent
 from triage_agent.audit import AuditLog
 from triage_agent.llm import FakeLLM
-from triage_agent.models import CaseState
+from triage_agent.models import CaseState, ClassifierResult
 from triage_agent.pipeline import Pipeline
 from triage_agent.store import SQLiteCaseStore, connect
 from triage_agent.web.app import create_app, relative_due, short_due
@@ -656,3 +656,17 @@ def test_done_lane_lists_sent_and_taken_cases_collapsed(console):
     assert "<summary>Queue (13)</summary>" in html  # the queue count covers open cases only
     # Opening a closed case opens the Done lane, so the selection is visible.
     assert '<details class="lane lane-done" open>' in console.client.get("/cases/case-T01").text
+
+
+# --- Model explanation (case store only) ---------------------------------------------------------
+def test_model_explanation_is_shown_truncated_and_never_audited(empty_console):
+    c = empty_console
+    marker = "zq-explain-91"
+    c.llm._script = [ClassifierResult(label="general_question", confidence=0.95, reason=f"{marker} " + "x" * 400)]
+    case = typed(c, "How do I get my invoice?")
+    assert case.model_explanation.startswith(marker) and len(case.model_explanation) == 300
+    box = ai_box(c.client.get(f"/cases/{case.id}").text)
+    assert f"<dt>Model&#39;s explanation (unverified)</dt><dd>{marker} " in box
+    rows = c.app.state.store.conn.execute("SELECT payload_json FROM audit").fetchall()
+    assert rows and not any(marker in r[0] for r in rows)
+    assert marker not in case.draft  # never used in a reply

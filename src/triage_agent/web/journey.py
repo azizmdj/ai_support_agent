@@ -241,4 +241,6 @@ def ai_decision(case: Case, rows: list[AuditEvent], ctx: Context | None = None) 
         ("Confidence", confidence),
         ("Answered by", ctx.provider_labels.get(provider, provider) or "-"),
     ]
+    if case.model_explanation:
+        out.append(("Model's explanation (unverified)", case.model_explanation))
     return AIDecision(_AI_SUMMARY.get(reason, "The AI classified this message."), out, True)

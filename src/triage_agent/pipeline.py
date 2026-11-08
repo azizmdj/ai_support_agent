@@ -18,6 +18,7 @@ from .store import CaseStore
 from .templates import MissingField, fill
 
 ACTOR = "pipeline"
+MAX_EXPLANATION = 300  # characters of the model's own explanation kept on the case
 
 
 class Pipeline:
@@ -89,6 +90,7 @@ class Pipeline:
         case.confidence = result.confidence
         cls = self.config.classes.get(result.label)
         case.predicted_class = cls.name if cls is not None else None  # only a known class name, never raw output
+        case.model_explanation = result.reason.strip()[:MAX_EXPLANATION] or None  # case store only, not the audit
         if cls is None or cls.name == UNCLEAR:
             case.class_name, reason_code = UNCLEAR, "unknown_label" if cls is None else "model_unclear"
             case.reason = f"model: no usable class ({reason_code})"
