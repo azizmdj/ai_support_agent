@@ -12,6 +12,7 @@ Oct 31, 2026 · @Aziz M
 | 3b | Built | 100 synthetic tickets with seeded fake PII, the `eval` command and metrics including PII leak rate and injection resistance, a live run with gpt-4o-mini |
 | 4 | Built | Dockerfile, docker-compose, health endpoint, CI with ruff and pytest, full README. The hosted demo is dropped (see Decisions) |
 | 5 | Built | Clean-up (the `demo` command and the unused `route` rule action are gone), a read-only System page, a simpler decision card, model hyperparameters in `pack/models.yaml`. The test suite passes in CI |
+| 6 | Built | Story 0: three tabs (Setup, Review, Monitor), an AI decision box on every card, collapsible one-line queue lanes with a Done lane, an honest missing-field card, plain wording, and a seed with only one overdue case |
 
 ## Problem
 
@@ -51,7 +52,7 @@ The demo shows that a triage agent can be built, evaluated and deployed in a way
 - Swappable adapters for ticket system, model and case store
 - A human approval gate enforced in code, not only in the prompt
 - An audit log of every classification, draft, edit, approval and send
-- A reviewer console: two server-rendered pages, Review and System, with plain forms
+- A reviewer console: three server-rendered tabs, Setup, Review and Monitor, with plain forms
 - A plain Python package with SQLite that runs on a laptop; tests run with the network blocked
 - Real-model support behind swappable adapters, with PII masking before every real-model call
 - An evaluation suite with accuracy, safety and privacy numbers
@@ -139,7 +140,7 @@ Business rules and data privacy are both controlled by configuration, with safet
 - **Fail closed.** If masking fails, no provider is called, a `mask_failed` audit row is written, and the case goes to needs a person. The whole chain stops, including the fake provider.
 - **The fake provider sees unmasked text.** It runs locally, makes no network call, and is the offline default.
 - **What reaches a model.** A message that matches a fraud keyword never reaches a model, because the LLM is not called when a rule fires. A complaint without a keyword may reach the model, masked.
-- **No message text in the audit log.** Audit rows hold only ids, class names, confidence, rule id, template id, the provider id that answered, hashes and short codes. The code rejects any other payload field. The case store keeps the customer message text so the reviewer can read it; the audit log never does. A configurable retention period (planned, later).
+- **No message text in the audit log.** Audit rows hold only ids, class names, confidence, rule id, template id, the provider id that answered, hashes and short codes. The code rejects any other payload field. When a rule fires, the row names the rule and the position of the keyword in `pack/rules.yaml`, never the keyword itself, because a keyword that fired also occurs in the message. The case store keeps the customer message text, the keyword and the model's own short explanation (at most 300 characters, shown as unverified) so the reviewer can read them; the audit log never does. A configurable retention period (planned, later).
 - **Check for leaks.** A test seeds tickets with fake IBANs, card numbers, emails and phone numbers and checks that none of them appears in any model payload, audit row or log line, including the error paths. The `eval` command also measures the PII leak rate at the model boundary: every payload sent to a model is recorded and checked for the seeded values.
 - **Route by sensitivity (planned, later).** Each class sets which models may see it.
 
@@ -149,88 +150,113 @@ Automatic detection misses things, especially names and free-text addresses, and
 
 ## Product design
 
-The reviewer console is the product: customers only see the reply, so the reviewer's screen should make a routine ticket one action. It has two tabs: **Review** for the queue and **System** for the flow, settings and rules. Every button on a decision card calls an action in the approval gate. System has no buttons.
+The reviewer console is the product: customers only see the reply, so the reviewer's screen should make a routine ticket one action. It tells one story in three tabs, in this order: **Setup** (understand the system), **Review** (the daily work) and **Monitor** (the overview for a team lead). Every button on a decision card calls an action in the approval gate. Setup and Monitor have no buttons.
 
 **Who uses it**
 
 - **Support reviewer** (most of the time): approves, edits, escalates or corrects the class, and takes fraud and complaint cases.
-- **Team lead** (occasionally): adds classes and templates by editing the config files, then checks the System page and runs `eval` to compare accuracy before and after a change.
+- **Team lead** (occasionally): checks Monitor for open, overdue and done cases and the latest evaluation; adds classes and templates by editing the config files, then checks Setup and runs `eval` to compare accuracy before and after a change.
 - **Customer:** receives faster, consistent replies in the usual channel. Code appends a short note to every draft saying the reply was prepared with AI assistance and reviewed by the team.
 
 **Header**
 
-The header shows the app name with "Unofficial demo, synthetic data" and the links Review and System. Nothing else. The model, the config version and the pause switch sit in the Review sidebar.
+The header shows the app name with "Unofficial demo, synthetic data" and the links Setup, Review and Monitor. Nothing else. The model, the config version and the pause switch sit in the Review sidebar.
+
+**Setup: read-only (`/system`)**
+
+Everything on Setup is derived from the loaded config at request time, so an edit to a pack file shows up after a restart. The page has no sidebar and no form, a column of about 960px, and a one-line status with the model, config version and pause state. Each block is collapsed and ends with "Change this in pack/<file>.yaml, then restart."
+
+- **How it works** (open): three lines. Rules first; the AI only classifies; a person approves.
+- **The six steps of every message:** a table, always visible: who does each step, what it does, input and output, and which file or setting controls it. Each step has an anchor (`#received`, `#rules`, `#classify`, `#template`, `#review`, `#reply`) that the trail on each card links to.
+- **AI model and threshold** (`#settings`): the confidence needed for a draft, the pause state, the reviewer id, the config version, and the model chain with kind, model, host, temperature, maximum answer length, timeout and the key variable name with "set" or "not set". A key value is never shown.
+- **Classes:** name, description (the class list in the AI prompt), priority, team, risk ("locked: always a person") and reply ("approved template" or "no draft").
+- **Rules and their keywords:** each rule with its target class, languages and every keyword and pattern.
+- **The exact AI prompt:** the system and user prompt, built by the same functions the classifier uses, with a placeholder for the message. The page calls no model. The test model does not use a prompt.
+- **Approved reply templates:** every template file with its id, language, required fields and text.
+- **Template fields and the AI-assistance note:** the allowed ticket fields and the note added to every draft, per language.
+- **Deadlines:** per class, in words ("1 hour", "15 days").
+- **Explain:** three collapsed sections: Business (the three costly mistakes and what prevents each), Math (the decision rule and metric definitions, see "How to read the numbers") and Engineering (interfaces, case states, audit, fail-closed paths, how to add a class or a model).
 
 **Review: one screen, one queue**
 
 &#91;embedded content: reviewer console · one card per ticket\]
 
-The page has a slim sidebar on the left and a centered column of about 720px. The sidebar starts with a "New message" link to the home screen, then lists the queue in three lanes, each with a count; a row shows the ticket id, the class and the due time. Only the queue scrolls, so the footer stays visible: the model (linked to the settings on System), the config version, and the pause state with its switch. The System link is in the header only. The queue scrollbar is thin and low-contrast in light and dark mode.
+The page has a slim sidebar on the left and a centered column of about 720px. The sidebar starts with a "New message" link to the home screen, then lists the queue in four collapsible lanes (HTML `details`, no JavaScript), each with its count in the title. Each item is one short line: ticket id, class and due time, for example "T03 · fraud report · 30m late" or "T08 · card blocked · due in 3h". Only the queue scrolls, so the footer stays visible: the model (linked to the settings on Setup; the offline fake shows as "test model (no real AI)"), the config version, the pause state with its switch, and one line on what Pause does.
 
-- **Urgent:** escalated cases, sorted by deadline, with a relative due time such as "due in 45m" or "overdue by 5m".
-- **Ready to approve:** drafted cases.
-- **Needs a person:** unclear or low-confidence messages, model errors, paused tickets and drafts blocked by a missing field or language.
+- **Urgent** (open): escalated cases, sorted by deadline.
+- **Ready to approve** (open): drafted cases, sorted by deadline.
+- **Needs a person** (open): unclear or low-confidence messages, model errors, paused tickets and drafts blocked by a missing field or language, sorted by deadline.
+- **Done** (collapsed): sent and taken cases, newest first, each with its outcome ("sent" or "taken"). It opens when a closed case is shown.
 
 "New message" (`/new`) is a home screen with no card: one line, a text box "Send a test message..." with a language select and a Send button, and four small buttons below it (Routine question, Fraud report, Complaint, Hostile message). Each creates a new ticket, runs it through the pipeline and opens its card. Each scenario button rotates between an English and a German variant. A quiet line under the box says: synthetic data only, names and addresses are not masked. The text box appears only on this screen, never on a case page, so it cannot be mistaken for a reply to the customer.
 
-Each ticket is one decision card: a line with the ticket id, class and due time, the customer message, a collapsed "Steps" line, the draft if there is one, and exactly one primary button. "Something wrong?" stays collapsed below it.
+Each ticket is one decision card, in this order: a line with the ticket id, class and due time; the customer message; the **AI decision** box; a collapsed "How this was decided" section; the draft if there is one; exactly one primary button; and the collapsed secondary actions.
 
-| Card | Primary button | Inside "Something wrong?" |
+The **AI decision** box is always visible and short. When the model was called it shows the masked text the model saw, the predicted class, the confidence next to the threshold ("0.90, needs 0.70"), which model answered, and the model's own explanation marked "unverified". A low-confidence case keeps its predicted class here, although its class is `unclear`. When no model was called it says why in one line: the rule and the keyword or pattern from `pack/rules.yaml` that fired, the pause switch, or a masking failure.
+
+| Card | Primary button | Secondary actions |
 | --- | --- | --- |
-| Drafted | **Approve and send** (the draft is editable; a changed text is logged as an edit, then approved) | Wrong class, Escalate to a person |
-| Needs a person | **Set class and draft** (the class select starts on "Choose a class..."; submitting without a class is rejected with a "Not done:" banner and changes nothing) | Escalate to a person |
+| Drafted | **Approve and send** (the draft is editable; a changed text is logged as an edit, then approved) | "Change class or escalate": Wrong class, Escalate to a person |
+| Needs a person | **Set class and draft** (the class select starts on "Choose a class..."; submitting without a class is rejected with a "Not done:" banner and changes nothing) | "Change class or escalate": Escalate to a person |
+| Needs a person, draft blocked by a missing field or language | **Escalate to a person**, under the note "A required detail is missing, so no draft can be made. Ask the customer or escalate." | "Change class": Wrong class (a different class may use a template that needs fewer fields) |
 | Escalated (fraud, complaint) | **Take case** | none |
 
 - After any action the next ticket opens automatically: Urgent first, then Ready, then Needs a person. A one-line banner confirms the action, such as "Done: Reply sent via mock ticket system."
-- Sent and taken cases leave the lanes.
+- A class change says "moved to the lane for its new class" only when the case really moved. If it stays, the same case opens again with "A new draft was made" or "no draft could be made. The case stays in Needs a person."
+- Sent and taken cases leave the open lanes and appear under Done.
 - A stale form (the draft changed since the page loaded) is rejected with a clear message, and nothing is sent.
 - Opening Review shows the most urgent case. An empty queue shows the New message screen, starting with "Queue is empty."
 - On a phone the sidebar sits above the card, and the queue is a section "Queue (n)" that is open by default and can be folded away.
 
-**Journey trail**
+**How this was decided**
 
-The "Steps" line on each card is collapsed by default. Its summary carries the reason and whether action is needed, for example "Steps · rule fraud_keywords · Your turn". Opened, it lists the six steps, one line each, and each step name links to its row on the System page.
+This section on each card is collapsed by default. Its summary carries the reason, for example "How this was decided · rule fraud_keywords". Opened, it lists the six steps, one line each, and each step name links to its row on Setup.
 
 | Step | Actor | Example result |
 | --- | --- | --- |
 | 1. Message received | Customer | received time |
 | 2. Rules | Code | "rule fraud_keywords fired", "no rule matched", "held: paused" |
 | 3. Classify | AI | "fee_question 0.90 via openai_main", "skipped: rule fired", "failed: model error", "failed: masking failed, no model call" |
-| 4. Template | Code | template id, or "no draft: missing card_last4" |
+| 4. Template | Code | template id, "no draft: missing card_last4", or "no draft: rule fraud_keywords fired" |
 | 5. Review | Reviewer | "approved by …", "taken by …", or waiting |
 | 6. Reply | Code | "sent, with AI-assistance note", "not sent yet", "no reply: handled by a person" |
 
-Each step has a written status: Done, Skipped, Your turn or Pending. The trail is built only from the case, its audit rows and the loaded config, so it adds no new storage.
+Each step has a written status: Done, Skipped, Your turn or Pending. "Your turn" appears once per card, on the step that waits for the reviewer. The trail is built only from the case, its audit rows and the loaded config.
 
-Below the steps, the same section shows the case facts (state, class, priority, team, due time) and "What each step saw and produced": one row per step with its input, output and the config used. For Classify the input is the masked message, computed from the stored ticket when the page loads and never stored, and the config is the model, its temperature and the threshold. The raw audit rows sit in a nested, collapsed "Audit log".
+Below the steps, the same section shows the case facts (state, class, priority, team, due time) and "What each step saw and produced": one row per step with its input, output and the config used. For Classify the input is the masked message, computed from the stored ticket when the page loads and never stored. The raw audit rows sit in a nested, collapsed "Audit log".
 
-**System: read-only**
+**Monitor: read-only (`/monitor`)**
 
-Everything on the System page is derived from the loaded config at request time, so an edit to a pack file shows up after a restart. The page has no sidebar and no form, a column of about 960px, and a one-line status with the model, config version and pause state. Wide tables scroll sideways.
+One page for a team lead, with plain numbers and no charts:
 
-- **Flow:** the six steps as a table, always open: who does it, what it does, input and output, and which file or setting controls it. Each step has an anchor (`#rules`, `#classify`, `#template`, `#review`, `#reply`).
-- **Settings** (`#settings`): the config version, the pause state, the confidence threshold, the deadline for unclear tickets, the reviewer id, and the provider chain with kind, model, host, temperature, max_tokens, timeout and the key variable name with "set" or "not set". A key value is never shown.
-- **Business rules:** the classes (priority, team, deadline, risk, draft mode, number of templates, languages) and the rules (action, target class, number of keywords, languages).
-- **Explain:** three collapsed sections: Business (the three costly mistakes and what prevents each), Math (the decision rule and metric definitions, see "How to read the numbers") and Engineering (interfaces, case states, audit, fail-closed paths, how to add a class or a model).
+- Counts by state: urgent (escalated), ready to approve, needs a person, sent and taken, plus the number of open cases past their deadline, with a link to each.
+- Cases by class, open and done.
+- The pause state, the model and the live config version.
+- The latest evaluation report from `eval/results/` (the newest run date; on the same date the test split wins): date, model, split, fraud and complaint tickets drafted, personal-data leaks to the model, classes correct, and the config version it ran on. If that version differs from the live one, a note says "Eval ran on an older config". A run with the test model is labeled a regression check, not a result. Without a report, the page says so.
+- The 20 most recent audit rows across all cases, newest first, with only the fields the audit log allows.
 
 **Trust features**
 
-- A reason on every card, in the Steps summary: the rule that fired, or the model's class and confidence.
-- The journey trail and the step table, so a first-time visitor sees who did what with which input.
+- The AI decision box on every card: what the model saw, what it predicted, how sure it was against the threshold, or why no model was called.
+- The trail and the step table, so a first-time visitor sees who did what with which input.
 - Wrong class is one click and doubles as labeled feedback: a `class_corrected` audit row with the old and new class.
-- A pause switch in the sidebar footer. While it is on, rules still run and fraud still escalates, the LLM is not called, and everything else goes to Needs a person with the reason "paused". Switching it writes a `pause_on` or `pause_off` audit row.
+- A pause switch in the sidebar footer, with one line on what it does. While it is on, rules still run and fraud and complaint keywords still escalate, the LLM is not called, and every other new message goes to Needs a person with the reason "paused". Cases already in the queue are not changed, and reviewers can still approve, escalate and take cases. Switching it writes a `pause_on` or `pause_off` audit row.
 - A typed test message is checked before anything is created; it never appears in an audit row or a URL.
 - State is always written as text, never shown by color alone. System fonts, light and dark mode from the system setting, no icons, no animation, no JavaScript.
 
 **Demo experience**
 
-`docker compose up --build` or `uv run python -m triage_agent serve` starts the console at http://127.0.0.1:8000. On first start with an empty database it loads the 15 fixture tickets. The newest arrives "just now", and the ages of the older ones are scaled to a quarter, so the first screen shows cases that are due soon and exactly one clearly late fraud report (T03). Only the seeded arrival times change; the deadline rules are the same as for any ticket. A reviewer opens New message, clicks a scenario button or types a short message, opens "Steps" on the card to follow the trail, and opens System to see why. That shows flexibility, banking fit and safety in two minutes.
+`docker compose up --build` or `uv run python -m triage_agent serve` starts the console at http://127.0.0.1:8000. On first start with an empty database it loads the 15 fixture tickets. The newest arrives "just now", and the ages of the older ones are scaled to a quarter, so the first screen shows cases that are due soon and exactly one clearly late fraud report (T03). Only the seeded arrival times change; the deadline rules are the same as for any ticket.
+
+A visitor opens Setup to read "How it works", switches to Review, opens New message, clicks a scenario button or types a short message, reads the AI decision box on the card, and opens Monitor to see the counts and the latest evaluation. That shows flexibility, banking fit and safety in two minutes.
 
 **Left out on purpose**
 
-- An editing UI for the config. The System page only shows the config. Classes, rules, templates and settings are edited as files, because config belongs in git with review before merge.
+- An editing UI for the config. Setup only shows the config. Classes, rules, templates and settings are edited as files, because config belongs in git with review before merge.
+- JavaScript tabs or widgets. Lanes and blocks fold with plain HTML `details`.
+- Charts and dashboards. Monitor shows plain counts.
+- Free text in the audit log. The model's explanation is kept on the case only, and a rule keyword is logged as its position in `pack/rules.yaml`, not as text, because a keyword that fired also occurs in the customer's message.
 - A customer-facing chat window, which is a different product with different risks. The New message text box is a test input for the demo, not a customer-facing chat.
-- Dashboards and a done-today history.
 - An automatic instant acknowledgment for fraud reports. It would send something without approval, so it is an open question for Finom.
 
 ## Compliance map
@@ -358,7 +384,7 @@ Finom can add its own labeled tickets, rerun `eval`, and see accuracy before tru
 The core is a plain Python package with SQLite. It runs on a laptop with no network, in a container, and Finom can import it into its own services.
 
 - **Packaging:** an installable Python package (`pyproject.toml`, managed with `uv`).
-- **Docker:** a `Dockerfile` on `python:3.13-slim` installs the locked dependencies with `uv sync --frozen --no-dev` in their own layer, then copies the code, the pack, the eval set and the console fixture tickets. It runs as a non-root user, exposes port 8000 and starts `serve --host 0.0.0.0`. A `HEALTHCHECK` calls `/health` with Python's `urllib`. `.dockerignore` keeps `.git`, `.venv`, caches, `.env` files, databases and `eval/results` out of the image.
+- **Docker:** a `Dockerfile` on `python:3.13-slim` installs the locked dependencies with `uv sync --frozen --no-dev` in their own layer, then copies the code, the pack, the eval set and the console fixture tickets. It runs as a non-root user, exposes port 8000 and starts `serve --host 0.0.0.0`. A `HEALTHCHECK` calls `/health` with Python's `urllib`. `.dockerignore` keeps `.git`, `.venv`, caches, `.env` files, databases and `eval/results` out of the image. Because the reports are not in the image, the Monitor tab in the container says that no evaluation report was found.
 - **docker-compose:** one service. The port is bound to `127.0.0.1:8000` only. `TRIAGE_DB=/data/triage.db` sits on a named volume, so cases survive a restart. `TRIAGE_PROVIDER` defaults to `fake`. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are passed through from the shell by name; no value is in any file. A commented-out line mounts `./pack` read-only, so classes and templates can be edited on the host; the config is read at startup, so a `docker compose restart` applies an edit.
 - **Health endpoint:** `GET /health` returns `{"status": "ok", "models": [provider ids]}`. It changes no state and shows no secrets.
 - **Host and port:** `serve --host` (default `127.0.0.1`) and `--port` (default 8000). The container uses `--host 0.0.0.0`.
@@ -398,7 +424,7 @@ src/triage_agent/            pipeline, rules, approval gate, audit log, config v
 src/triage_agent/masking.py  PII masking
 src/triage_agent/evaluation.py  evaluation suite and metrics
 src/triage_agent/providers/  model adapters (openai_compatible, anthropic) and the registry that builds the chain
-src/triage_agent/web/        reviewer console: FastAPI app, journey trail, System page, Jinja templates, one CSS file
+src/triage_agent/web/        reviewer console: FastAPI app, journey trail and AI decision box, Setup and Monitor pages, Jinja templates, one CSS file
 pack/                        taxonomy, rules, settings, templates, scenarios, models (providers and routing)
 tests/                       unit, adapter, masking and console tests, fixture tickets
 README.md
@@ -420,6 +446,7 @@ The console uses plain HTML forms rendered on the server: no JavaScript, no CDN 
    - 3b: 100 synthetic tickets with seeded fake PII, the evaluation suite with PII leak rate and injection resistance, and a live run with gpt-4o-mini. (built, phase 3b)
 4. **Packaging and README:** Dockerfile, docker-compose, health endpoint, CI, and a README with the flowchart, how Finom adapts it, results and limits. (built, phase 4) The hosted demo is dropped.
 5. **Polish:** clean-up, the read-only System page, a simpler decision card, and model hyperparameters in `pack/models.yaml`. (built, phase 5)
+6. **Story 0:** the Setup, Review and Monitor tabs, the AI decision box, one-line collapsible lanes with a Done lane, the missing-field card, plain wording and the seed change. (built, phase 6)
 
 Keep Finom-specific wording in the pack files and not in the core, so a second pack is a copy. One exception today: the fake LLM's keyword list lives in the core.
 
@@ -488,9 +515,10 @@ These run in CI on every push to `main` and on every pull request, and locally w
 | Model adapters | Request URL, headers and body, response parsing, and HTTP errors, timeouts and malformed bodies, for both adapters over mocked HTTP | Built |
 | Secret scan | No API-key-shaped string (`sk-…`) in `src/`, `pack/`, `tests/`, `docs/`, `.github/`, the `Dockerfile`, `docker-compose.yml` or the README, and `.env` files are git-ignored | Built |
 | Pause switch | While paused, fraud still escalates, everything else goes to a person, and the model is not called | Built |
-| System page | Shows the flow, settings and rules from the loaded pack and follows a changed pack after a restart; shows whether a key variable is set but never its value; GET changes nothing; config text is escaped | Built |
+| Setup page | Shows the flow, settings, classes with descriptions, rule keywords, templates, allowed fields and the exact prompt from the loaded pack, and follows a changed pack after a restart; shows whether a key variable is set but never its value; GET changes nothing; config text is escaped | Built |
+| Monitor page | Counts by state and class, overdue cases, the latest eval report with an older-config note or a no-report note, the 20 newest audit rows without message text; GET changes nothing | Built |
 | Packaging | `/health` returns ok and the provider ids without state change or secrets; compose passes the key variables by name only; the Dockerfile copies only existing paths | Built |
-| Reviewer console | Scenarios land in the right lane; approve, edit, stale draft, escalate and wrong class behave and log correctly; exactly one primary button per card; the card order is message, collapsed Steps, draft, primary button; trail steps link to System; the header holds no controls and the pause switch sits in the sidebar; the Needs-a-person class select starts on a placeholder that the server rejects with no state change and no audit row; typed messages land in the right lane, a bad input creates no case and no audit row, the typed text never reaches an audit row or a URL, and the composer appears only on New message; GET never changes state; customer text is escaped | Built |
+| Reviewer console | Scenarios land in the right lane; approve, edit, stale draft, escalate and wrong class behave and log correctly; exactly one primary button per card; a missing-field card offers Escalate; the class-change banner matches what happened; queue items are one line and sent or taken cases appear under Done; the seed starts with one overdue case; the AI decision box shows the masked text, predicted class, confidence against the threshold and the rule keyword; the card order is message, AI decision, collapsed "How this was decided", draft, primary button; trail steps link to System; the header holds no controls and the pause switch sits in the sidebar; the Needs-a-person class select starts on a placeholder that the server rejects with no state change and no audit row; typed messages land in the right lane, a bad input creates no case and no audit row, the typed text never reaches an audit row or a URL, and the composer appears only on New message; GET never changes state; customer text is escaped | Built |
 
 Shorter unit tests cover config validation, template filling (a missing field or language blocks the draft), audit-log fields and config version, the model-down path, invalid model output, deadlines, the journey trail and the no-network guard. Storage tests on Postgres are (not built). CI also runs the ruff linter. A run with the real model on demand is the `classify` command.
 
@@ -513,7 +541,9 @@ Shorter unit tests cover config validation, template filling (a missing field or
 - **The Anthropic adapter sends no `temperature`,** because API version `2026-10-21` rejects sampling parameters. It is tested with mocked HTTP only.
 - **Coverage counts missing-field and other-language tickets,** so it cannot reach 1.0. State accuracy shows whether tickets ended where expected.
 - **The baseline comes from the fake provider.** Tests compare against it and never write it; `eval --write-baseline` updates it on purpose.
-- **The System page is read-only.** It shows the loaded config and changes nothing. There is no editing UI: config belongs in git with review before merge, and a restart plus a new config version makes every change traceable.
+- **Setup and Monitor are read-only.** They show the loaded config, the case counts and the latest evaluation, and change nothing. There is no editing UI: config belongs in git with review before merge, and a restart plus a new config version makes every change traceable.
+- **The model's explanation is shown, not logged.** The `reason` the model returns is kept on the case, cut to 300 characters, and shown in the AI decision box as "Model's explanation (unverified)". It is never written to the audit log or a log line and never used in a reply. It needed no schema change, because a case is stored as one JSON document.
+- **A missing field ends at a person.** When a template field or language is missing, the card offers Escalate as the main action; a class change stays available, because another class's template may need fewer fields.
 - **Rules only escalate.** The `route` action was never used and was removed; a pack that still uses it is rejected.
 - **The `demo` command is gone.** The console replaced it; the fixture outcomes are still checked by a test that runs the pipeline directly.
 - **The hosted demo is dropped.** A public demo needs hosting, TLS, an access code and spend limits. A recorded demo plus docker-compose serve the pitch better.
