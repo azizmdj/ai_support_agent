@@ -6,26 +6,19 @@
     <details class="queue" open>
       <summary>Queue ({{ total }})</summary>
       {% for key, title, cases in lanes %}
-        <section class="lane lane-{{ key }}">
-          <h2>{{ title }} <span class="count">({{ cases|length }})</span></h2>
+        <details class="lane lane-{{ key }}" open>
+          <summary>{{ title }} ({{ cases|length }})</summary>
           {% if cases %}
             <ul>
               {% for c in cases %}
                 {% set is_sel = selected and c.id == selected.id %}
-                <li class="{{ 'selected' if is_sel }}">
-                  <a href="/cases/{{ c.id }}" {% if is_sel %}aria-current="true"{% endif %}>
-                    {% if is_sel %}<span class="marker">Open:</span>{% endif %}
-                    <span class="tid">{{ c.ticket_id }}</span>
-                    <span class="cls">{{ c.class_name }}</span>
-                    <span class="due">{{ due(c) }}</span>
-                  </a>
-                </li>
+                <li{% if is_sel %} class="selected"{% endif %}><a href="/cases/{{ c.id }}"{% if is_sel %} aria-current="true"{% endif %}>{{ line(c) }}</a></li>
               {% endfor %}
             </ul>
           {% else %}
             <p class="empty">None</p>
           {% endif %}
-        </section>
+        </details>
       {% endfor %}
     </details>
     <div class="status">

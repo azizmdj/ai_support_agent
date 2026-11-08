@@ -89,6 +89,25 @@ def relative_due(due: datetime | None, now: datetime) -> str:
     return f"due in {span}" if seconds >= 0 else f"overdue by {span}"
 
 
+def short_due(due: datetime | None, now: datetime) -> str:
+    """One unit only, for the queue: "due in 2h", "1h late", "3d late"."""
+    if due is None:
+        return "no deadline"
+    seconds = int((due - now).total_seconds())
+    minutes = abs(seconds) // 60
+    span = f"{minutes // 1440}d" if minutes >= 1440 else f"{minutes // 60}h" if minutes >= 60 else f"{minutes}m"
+    return f"due in {span}" if seconds >= 0 else f"{span} late"
+
+
+def class_label(name: str | None) -> str:
+    return (name or "no class").replace("_", " ")
+
+
+def queue_line(case: Case, now: datetime) -> str:
+    """One short line per queue item, e.g. "T03 · fraud report · 1h late"."""
+    return f"{case.ticket_id} · {class_label(case.class_name)} · {short_due(case.due_at, now)}"
+
+
 def create_app(
     pack: Path = DEFAULT_PACK,
     db_path: str | None = None,
@@ -179,6 +198,7 @@ def create_app(
             steps=steps,
             classes=[c for c in config.classes.values() if c.name != UNCLEAR],
             due=lambda c: relative_due(c.due_at, current),
+            line=lambda c: queue_line(c, current),
         )
 
     def masked_view(text: str) -> str:

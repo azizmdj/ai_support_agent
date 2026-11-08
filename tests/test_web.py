@@ -13,7 +13,7 @@ from triage_agent.llm import FakeLLM
 from triage_agent.models import CaseState
 from triage_agent.pipeline import Pipeline
 from triage_agent.store import SQLiteCaseStore, connect
-from triage_agent.web.app import create_app, relative_due
+from triage_agent.web.app import create_app, relative_due, short_due
 from triage_agent.web.journey import STEPS
 
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
@@ -59,10 +59,20 @@ def empty_console():
     return Console(seed=False)
 
 
+LANE_KEYS = ("urgent", "ready", "needs")
+
+
+def lane_html(html, key):
+    return html.split(f'class="lane lane-{key}"', 1)[1].split("</details>", 1)[0]
+
+
+def in_queue(html, ticket_id):
+    return any(f">{ticket_id} · " in lane_html(html, key) for key in LANE_KEYS)
+
+
 def lane_of(html, ticket_id):
-    for key in ("urgent", "ready", "needs"):
-        section = html.split(f'class="lane lane-{key}"', 1)[1].split("</section>", 1)[0]
-        if f">{ticket_id}<" in section:
+    for key in LANE_KEYS:
+        if f">{ticket_id} · " in lane_html(html, key):
             return key
     return None
 
@@ -101,11 +111,9 @@ def test_page_renders_lanes_and_header(console):
     assert '<a class="new" href="/new" >New message</a>' in html  # a case is open, so not the current page
     assert '<details class="queue" open>' in html and "<summary>Queue (15)</summary>" in html
     assert 'class="pill"' not in html  # test-message buttons live on /new only
-    for title in ("Urgent", "Ready to approve", "Needs a person"):
-        assert title in html
-    assert "Urgent <span class=\"count\">(5)</span>" in html
-    assert "Ready to approve <span class=\"count\">(7)</span>" in html
-    assert "Needs a person <span class=\"count\">(3)</span>" in html
+    assert '<details class="lane lane-urgent" open>\n          <summary>Urgent (5)</summary>' in html
+    assert "<summary>Ready to approve (7)</summary>" in html
+    assert "<summary>Needs a person (3)</summary>" in html
     # Default selection is the most urgent case: fraud has the shortest deadline.
     assert 'aria-current="true"' in html
     assert "https://" not in html and "<script" not in html  # no CDN, no JavaScript
@@ -186,6 +194,23 @@ def test_relative_due():
     assert relative_due(datetime(2026, 11, 5, 14, 0, tzinfo=timezone.utc), NOW) == "due in 3d 2h"
 
 
+def test_short_due_and_queue_line():
+    assert short_due(datetime(2026, 11, 2, 14, 30, tzinfo=timezone.utc), NOW) == "due in 2h"
+    assert short_due(datetime(2026, 11, 2, 10, 40, tzinfo=timezone.utc), NOW) == "1h late"
+    assert short_due(datetime(2026, 11, 2, 11, 55, tzinfo=timezone.utc), NOW) == "5m late"
+    assert short_due(datetime(2026, 11, 5, 14, 0, tzinfo=timezone.utc), NOW) == "due in 3d"
+    assert short_due(None, NOW) == "no deadline"
+
+
+def test_queue_item_is_one_short_line(console):
+    html = console.client.get("/").text
+    urgent = lane_html(html, "urgent")
+    items = re.findall(r"<li[^>]*><a [^>]*>([^<]*)</a></li>", urgent)
+    assert len(items) == 5 and all(re.fullmatch(r"T\d\d · [a-z ]+ · (due in \d+[mhd]|\d+[mhd] late)", i) for i in items)
+    assert any(" · fraud report · " in i for i in items)  # underscores become spaces
+    assert "<span" not in urgent and "Open:" not in urgent  # nothing else in an item
+
+
 # --- Scenarios ---------------------------------------------------------------------------------
 @pytest.mark.parametrize("name,state,lane", [
     ("fraud", CaseState.ESCALATED, "urgent"),
@@ -238,7 +263,7 @@ def test_approve_unchanged_draft(console):
     assert console.store.get(case.id).state == CaseState.SENT
     html = console.client.get(location).text
     assert "Reply sent via mock ticket system." in html
-    assert ">T01<" not in html  # sent cases leave the lanes
+    assert not in_queue(html, "T01")  # sent cases leave the lanes
 
 
 def test_approve_with_edited_text(console):
@@ -337,7 +362,7 @@ def test_take_case(console):
     console.post("/cases/case-T03/take")
     assert console.store.get("case-T03").state == CaseState.TAKEN
     assert console.events("case-T03")[-1] == "taken"
-    assert ">T03<" not in console.client.get("/").text
+    assert not in_queue(console.client.get("/").text, "T03")
 
 
 # --- Pause ---------------------------------------------------------------------------------------
@@ -402,7 +427,7 @@ def test_empty_queue_page(empty_console):
     assert "Queue is empty. Send a test message to see" in main
     assert '<a href="/system#flow">how a ticket moves</a>' in main
     assert main.count('class="pill"') == 4 and "<article" not in main and 'class="primary"' not in main
-    assert "Ready to approve <span class=\"count\">(0)</span>" in html
+    assert "<summary>Ready to approve (0)</summary>" in html
 
 
 def test_new_message_home_screen(console):

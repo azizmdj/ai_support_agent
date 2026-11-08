@@ -63,17 +63,13 @@ th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(-
 .queue { flex: 1 1 auto; min-height: 0; margin: 0; overflow-y: auto; } /* only the queue scrolls */
 .queue { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; } /* thin, low-contrast; the variables follow light and dark */
 .queue > summary { display: none; } /* desktop: the queue is always open; the summary shows on phones */
-.lane { margin-bottom: 1rem; }
-.lane h2 { margin: 0 0 .25rem; padding: 0 .5rem; font-size: .75rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
-.lane ul { list-style: none; margin: 0; padding: 0; }
-.lane li a { display: grid; grid-template-columns: auto 1fr; gap: 0 .5rem; padding: .35rem .5rem; color: inherit; text-decoration: none; border-radius: 6px; }
+.lane { margin: 0 0 .75rem; }
+.lane > summary { padding: 0 .5rem; font-size: .75rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.lane ul { list-style: none; margin: .2rem 0 0; padding: 0; }
+.lane li a { display: block; padding: .25rem .5rem; color: inherit; text-decoration: none; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lane li a:hover, .lane li a:focus { background: var(--surface-2); }
-.lane li.selected a { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
-.lane .marker { grid-column: 1 / -1; font-size: .75em; font-weight: 600; text-transform: uppercase; color: var(--accent); }
-.lane .tid { font-weight: 600; }
-.lane .cls { color: var(--muted); overflow-wrap: anywhere; }
-.lane .due { grid-column: 1 / -1; font-size: .85em; color: var(--muted); }
-.lane .empty { margin: 0; padding: 0 .5rem; color: var(--muted); }
+.lane li.selected a { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); font-weight: 600; }
+.lane .empty { margin: .2rem 0 0; padding: 0 .5rem; color: var(--muted); }
 .sidebar > .status { margin-top: auto; padding-top: .75rem; border-top: 1px solid var(--border); color: var(--muted); font-size: .85em; }
 .sidebar > .status p { margin: 0 0 .3rem; }
 .pause { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: .3rem 0 .5rem; }
