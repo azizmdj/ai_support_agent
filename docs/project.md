@@ -224,7 +224,7 @@ Everything on the System page is derived from the loaded config at request time,
 
 **Demo experience**
 
-`docker compose up --build` or `uv run python -m triage_agent serve` starts the console at http://127.0.0.1:8000. On first start with an empty database it loads the 15 fixture tickets, shifted in time so the newest arrives "just now". A reviewer opens New message, clicks a scenario button or types a short message, opens "Steps" on the card to follow the trail, and opens System to see why. That shows flexibility, banking fit and safety in two minutes.
+`docker compose up --build` or `uv run python -m triage_agent serve` starts the console at http://127.0.0.1:8000. On first start with an empty database it loads the 15 fixture tickets. The newest arrives "just now", and the ages of the older ones are scaled to a quarter, so the first screen shows cases that are due soon and exactly one clearly late fraud report (T03). Only the seeded arrival times change; the deadline rules are the same as for any ticket. A reviewer opens New message, clicks a scenario button or types a short message, opens "Steps" on the card to follow the trail, and opens System to see why. That shows flexibility, banking fit and safety in two minutes.
 
 **Left out on purpose**
 

@@ -1,6 +1,6 @@
 import re
 import socket
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -94,6 +94,16 @@ def test_seed_shifts_fixtures_so_newest_is_now(console):
     cases = console.store.list()
     assert len(cases) == 15
     assert max(c.received_at for c in cases) == NOW
+
+
+def test_seeded_queue_has_at_most_one_overdue_case(console):
+    overdue = [c for c in console.store.list() if c.due_at < NOW]
+    assert [(c.ticket_id, c.class_name) for c in overdue] == [("T03", "fraud_report")]
+    assert NOW - overdue[0].due_at >= timedelta(minutes=15)  # clearly late, not by a minute
+    due_soon = [c for c in console.store.list() if NOW <= c.due_at <= NOW + timedelta(hours=4)]
+    assert len(due_soon) >= 4  # the other fraud reports and the card cases are due soon
+    html = console.client.get("/").text
+    assert html.count(" late</a>") == 1
 
 
 def test_page_renders_lanes_and_header(console):

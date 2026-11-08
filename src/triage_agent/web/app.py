@@ -52,6 +52,7 @@ MESSAGES = {
 }
 
 MAX_MESSAGE_CHARS = 2000
+SEED_TIME_SCALE = 0.25  # fixture ages are compressed to a quarter when the console seeds an empty database
 DEMO_CUSTOMER = {"customer_name": "Demo Customer"}  # fake name, so templates can greet a typed message
 
 LANES = [
@@ -133,9 +134,12 @@ def create_app(
 
     if seed_tickets is not None and not store.list():
         tickets = load_tickets(seed_tickets)
-        shift = now() - max(t.received_at for t in tickets)  # newest fixture arrives "just now"
+        # The newest fixture arrives "just now"; older ones keep their order with ages scaled down, so the
+        # first screen shows due-soon cases and only one clearly late fraud report. Deadlines are unchanged.
+        newest, start = max(t.received_at for t in tickets), now()
         for t in tickets:
-            pipeline.process(t.model_copy(update={"received_at": t.received_at + shift}))
+            received = start - (newest - t.received_at) * SEED_TIME_SCALE
+            pipeline.process(t.model_copy(update={"received_at": received}))
 
     env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=True)
     app = FastAPI(title="Support triage console (unofficial demo)", docs_url=None, redoc_url=None, openapi_url=None)
