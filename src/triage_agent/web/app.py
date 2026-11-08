@@ -32,7 +32,7 @@ from ..providers.registry import build_llm
 from ..store import CaseNotFound, SQLiteCaseStore, connect
 from ..ticket_source import MockTicketSource, load_tickets
 from . import system
-from .journey import Context, journey
+from .journey import Context, ai_decision, journey
 
 HERE = Path(__file__).parent
 
@@ -196,18 +196,20 @@ def create_app(
 
     trail_context = dict(threshold=config.settings.confidence_threshold, rule_count=len(config.rules),
                          providers={pid: system.model_summary(config, pid) for pid in model_ids},
-                         chain=" -> ".join(model_ids), reviewer=reviewer)
+                         chain=" -> ".join(model_ids), reviewer=reviewer,
+                         provider_labels={pid: system.provider_label(config, pid) for pid in model_ids})
 
     def render(selected: Case | None, msg: str | None) -> HTMLResponse:
         current = now()
         ticket = store.get_ticket(selected.ticket_id) if selected else None
         all_lanes = lanes()
         events = audit.events(selected.id) if selected else []
-        steps = []
+        steps, ai = [], None
         if selected:
             model_called = any(e.event in {"classified", "model_error"} for e in events)
             masked = masked_view(ticket.text) if model_called else None
-            steps = journey(selected, events, Context(masked=masked, **trail_context))
+            ctx = Context(masked=masked, **trail_context)
+            steps, ai = journey(selected, events, ctx), ai_decision(selected, events, ctx)
         return page(
             "review.html", "review", msg,
             scenarios=list(scenarios.values()),
@@ -219,6 +221,7 @@ def create_app(
             ticket=ticket,
             events=events,
             steps=steps,
+            ai=ai,
             classes=[c for c in config.classes.values() if c.name != UNCLEAR],
             due=lambda c: relative_due(c.due_at, current),
             line=lambda c: queue_line(c, current),

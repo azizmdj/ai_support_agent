@@ -12,6 +12,9 @@ from pydantic import BaseModel
 ALLOWED_PAYLOAD_KEYS = {
     "class", "subtype", "confidence", "rule_id", "template_id", "draft_hash", "old_hash", "new_hash",
     "reason_code", "field", "lang", "error_type", "state", "team", "ticket_id", "old_class", "new_class", "provider",
+    # Which pattern of the rule fired, as its position in pack/rules.yaml (resolve it with the row's config
+    # version). An index, not the keyword: a keyword that fired also occurs in the customer's message.
+    "pattern_index",
 }
 
 

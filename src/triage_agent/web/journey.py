@@ -51,6 +51,7 @@ class Context:
     chain: str = ""
     masked: str | None = None  # computed on the fly from the stored ticket, never stored
     reviewer: str = ""
+    provider_labels: dict[str, str] = field(default_factory=dict)  # provider id -> plain name for the AI box
 
 
 def _step(number: int, result: str, status: str, input: str = "", config: str = "") -> Step:
@@ -175,3 +176,69 @@ def journey(case: Case, rows: list[AuditEvent], ctx: Context | None = None) -> l
         steps.append(_step(5, "waiting", PENDING))
         steps.append(_step(6, "not sent yet", PENDING))
     return steps
+
+
+# --- AI decision box ----------------------------------------------------------------------------
+@dataclass(frozen=True)
+class AIDecision:
+    """What the model did for this case, in plain words. Built from the case, its audit rows and the config."""
+
+    summary: str
+    rows: list[tuple[str, str]] = field(default_factory=list)  # (label, value)
+    model_called: bool = False
+
+
+_AI_SUMMARY = {
+    "model": "The AI picked a class with enough confidence.",
+    "low_confidence": "The AI was not sure enough, so a person decides.",
+    "model_unclear": "The AI could not tell which class this is, so a person decides.",
+    "unknown_label": "The AI answered with a class that does not exist, so a person decides.",
+}
+
+
+def ai_decision(case: Case, rows: list[AuditEvent], ctx: Context | None = None) -> AIDecision:
+    ctx = ctx or Context()
+    first = {}
+    for row in rows:
+        first.setdefault(row.event, row)
+
+    rule = first.get("rule_matched")
+    if rule:
+        text = f"No AI call: rule {rule.payload.get('rule_id')} fired"
+        if case.rule_pattern:
+            kind = "pattern" if case.rule_pattern.startswith("re:") else "keyword"
+            text += f" on the {kind} \"{case.rule_pattern}\" from pack/rules.yaml"
+        return AIDecision(text + ".")
+    if "held_paused" in first:
+        return AIDecision("No AI call: triage was paused when this message arrived.")
+    if "mask_failed" in first:
+        return AIDecision("No AI call: masking personal data failed, so nothing was sent to a model.")
+
+    saw = [("The model saw", ctx.masked if ctx.masked is not None else "the masked message")]
+    error = first.get("model_error")
+    if error:
+        return AIDecision(f"The AI call failed ({error.payload.get('reason_code')}), so a person decides.",
+                          saw + [("Models tried", ctx.chain or "-")], True)
+    classified = first.get("classified")
+    if not classified:
+        return AIDecision("The AI has not run for this case yet.")
+
+    p = classified.payload
+    reason = p.get("reason_code")
+    if reason == "unknown_label":
+        predicted = "not a known class"
+    else:
+        predicted = (case.predicted_class or p.get("class") or "-").replace("_", " ")
+        if p.get("subtype"):
+            predicted += f" / {str(p['subtype']).replace('_', ' ')}"
+    conf = p.get("confidence")
+    confidence = f"{conf:.2f}" if isinstance(conf, (int, float)) else "-"
+    if ctx.threshold is not None:
+        confidence += f", needs {ctx.threshold:.2f}"
+    provider = p.get("provider") or ""
+    out = saw + [
+        ("Predicted class", predicted),
+        ("Confidence", confidence),
+        ("Answered by", ctx.provider_labels.get(provider, provider) or "-"),
+    ]
+    return AIDecision(_AI_SUMMARY.get(reason, "The AI classified this message."), out, True)

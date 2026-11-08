@@ -211,7 +211,7 @@ def test_trail_links_to_system_anchors(console):
         assert f'<span class="actor">{actor}</span>' in html
     card = html.split('<article class="card', 1)[1]
     # Order: message, collapsed "How this was decided", draft and the one primary button, then the secondary actions.
-    order = ['class="message"', '<details class="steps">', 'class="draft"', 'class="primary"',
+    order = ['class="message"', 'class="ai-box"', '<details class="steps">', 'class="draft"', 'class="primary"',
              "Change class or escalate"]
     assert [card.index(x) for x in order] == sorted(card.index(x) for x in order)
     steps = card.split('<details class="steps">', 1)[1]
@@ -595,3 +595,47 @@ def test_css_has_dark_mode_and_no_external_resources(console):
     css = console.client.get("/static/style.css").text
     assert "@media (prefers-color-scheme: dark)" in css
     assert "url(" not in css and "@import" not in css and "@keyframes" not in css and "transition" not in css
+
+
+# --- AI decision box ---------------------------------------------------------------------------------
+def ai_box(html):
+    return html.split('<section class="ai-box"', 1)[1].split("</section>", 1)[0]
+
+
+def test_ai_box_for_a_drafted_case(console):
+    box = ai_box(console.client.get("/cases/case-T01").text)
+    assert "The AI picked a class with enough confidence." in box
+    assert "<dt>Predicted class</dt><dd>fee question</dd>" in box
+    assert "<dt>Confidence</dt><dd>0.90, needs 0.70</dd>" in box
+    assert "<dt>Answered by</dt>" in box  # the injected test double has no provider id; see the next test
+    assert "<dt>The model saw</dt><dd>Hi, which fees apply to my account?" in box
+
+
+def test_ai_box_names_the_provider_from_the_chain():
+    app = create_app(db_path=":memory:", reviewer_id=REVIEWER, now=lambda: NOW)  # default chain: fake
+    box = ai_box(TestClient(app).get("/cases/case-T01").text)
+    assert "<dt>Answered by</dt><dd>test model (no real AI)</dd>" in box
+
+
+def test_ai_box_for_a_rule_case_names_the_config_keyword(console):
+    box = ai_box(console.client.get("/cases/case-T04").text)  # "BETRUG!!! ..."
+    assert 'No AI call: rule fraud_keywords fired on the keyword &#34;betrug&#34; from pack/rules.yaml.' in box
+    assert "<dl>" not in box  # one line, no model rows
+    regex = console.app.state.pipeline.process(ticket("I did not authorize this payment", id="RX"))
+    box = ai_box(console.client.get(f"/cases/{regex.id}").text)
+    assert r"on the pattern &#34;re:\bdid not (make|authori[sz]e)\b&#34;" in box
+
+
+def test_ai_box_keeps_the_predicted_class_for_low_confidence(empty_console):
+    case = typed(empty_console, "My transfer is pending and which fees apply?")  # two topics -> 0.5
+    assert (case.class_name, case.predicted_class) == ("unclear", "pending_transfer")
+    box = ai_box(empty_console.client.get(f"/cases/{case.id}").text)
+    assert "The AI was not sure enough, so a person decides." in box
+    assert "<dt>Predicted class</dt><dd>pending transfer</dd>" in box and "<dd>0.50, needs 0.70</dd>" in box
+
+
+def test_ai_box_without_a_model_call(empty_console):
+    c = empty_console
+    c.post("/pause", paused="on")
+    paused = c.scenario("routine")
+    assert "No AI call: triage was paused when this message arrived." in ai_box(c.client.get(f"/cases/{paused.id}").text)

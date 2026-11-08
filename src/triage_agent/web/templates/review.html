@@ -61,6 +61,15 @@
         <h1 class="ticket">{{ c.ticket_id }} <span>· {{ c.class_name }} · {{ due(c) }}</span></h1>
         <blockquote class="message" aria-label="Customer message">{{ ticket.text }}</blockquote>
 
+        <section class="ai-box" aria-label="AI decision">
+          <h2>AI decision</h2>
+          <p>{{ ai.summary }}</p>
+          {% if ai.rows %}
+            <dl>{% for label, value in ai.rows %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
+            <p class="hint">IBANs, card numbers, emails and phone numbers are replaced before the call. Names and addresses are not.</p>
+          {% endif %}
+        </section>
+
         <details class="steps">
           <summary>How this was decided · {{ c.reason }}</summary>
           {% include "journey.html" %}

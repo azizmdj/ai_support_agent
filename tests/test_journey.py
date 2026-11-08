@@ -177,3 +177,21 @@ def test_steps_carry_input_and_config(make_env):
     steps = {s.name: s for s in journey(env.store.get(fraud.id), env.audit.events(fraud.id), ctx)}
     assert (steps["Classify"].input, steps["Classify"].status) == ("nothing: no model call", SKIPPED)
     assert steps["Reply"].input == "-" and steps["Review"].input == "the case, without a draft"
+
+
+# --- AI decision box ---------------------------------------------------------------------------------
+def test_ai_decision_lines_without_a_usable_model_answer(make_env):
+    from triage_agent.masking import MaskingError
+    from triage_agent.web.journey import Context, ai_decision
+
+    env = make_env(llm=FakeLLM(script=[MaskingError("boom")]))
+    case = env.run(ticket("Which fees apply?"))
+    ai = ai_decision(env.store.get(case.id), env.audit.events(case.id))
+    assert ai.summary == "No AI call: masking personal data failed, so nothing was sent to a model."
+    assert ai.rows == [] and not ai.model_called
+
+    env = make_env(llm=FakeLLM(script=[RuntimeError("down")]))
+    case = env.run(ticket("Which fees apply?", id="X2"))
+    ai = ai_decision(env.store.get(case.id), env.audit.events(case.id), Context(chain="a -> b", masked="m"))
+    assert ai.summary == "The AI call failed (provider_error), so a person decides."
+    assert ai.rows == [("The model saw", "m"), ("Models tried", "a -> b")]

@@ -59,9 +59,10 @@ class Pipeline:
         """Set class on the case. Returns "escalate" (a rule fired), "paused" or None."""
         hit = match_rules(ticket, self.config)
         if hit is not None:
-            case.class_name, case.rule_id = hit.class_name, hit.rule.id
+            case.class_name, case.rule_id, case.rule_pattern = hit.class_name, hit.rule.id, hit.pattern
             case.reason = f"rule {hit.rule.id}"
-            self.audit.write(case.id, ACTOR, "rule_matched", rule_id=hit.rule.id, **{"class": hit.class_name})
+            self.audit.write(case.id, ACTOR, "rule_matched", rule_id=hit.rule.id, pattern_index=hit.pattern_index,
+                             **{"class": hit.class_name})
             return "escalate"
         if self.store.is_paused():
             # Pause switch: no model call; everything a rule does not escalate goes to a person.
@@ -87,6 +88,7 @@ class Pipeline:
 
         case.confidence = result.confidence
         cls = self.config.classes.get(result.label)
+        case.predicted_class = cls.name if cls is not None else None  # only a known class name, never raw output
         if cls is None or cls.name == UNCLEAR:
             case.class_name, reason_code = UNCLEAR, "unknown_label" if cls is None else "model_unclear"
             case.reason = f"model: no usable class ({reason_code})"

@@ -74,6 +74,8 @@ class Case(BaseModel):
     subtype: str | None = None
     confidence: float | None = None
     rule_id: str | None = None
+    rule_pattern: str | None = None  # the config pattern that fired (from rules.yaml)
+    predicted_class: str | None = None  # the model's label, kept even when low confidence sends it to "unclear"
     reason: str = ""
     team: str | None = None
     priority: str | None = None
