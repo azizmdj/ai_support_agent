@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 from pydantic import BaseModel
 
-from .. import DEFAULT_PACK, DEFAULT_TICKETS
+from .. import DEFAULT_PACK, DEFAULT_TICKETS, REPO_ROOT
 from ..audit import AuditLog
 from ..config import UNCLEAR, load_config
 from ..gate import Gate, GateError
@@ -31,7 +31,7 @@ from ..pipeline import Pipeline
 from ..providers.registry import build_llm
 from ..store import CaseNotFound, SQLiteCaseStore, connect
 from ..ticket_source import MockTicketSource, load_tickets
-from . import system
+from . import monitor, system
 from .journey import Context, ai_decision, journey
 
 HERE = Path(__file__).parent
@@ -137,6 +137,7 @@ def create_app(
     llm: LLMProvider | None = None,
     seed_tickets: Path | None = DEFAULT_TICKETS,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    eval_results: Path = REPO_ROOT / "eval" / "results",
 ) -> FastAPI:
     config = load_config(pack)
     scenarios = {s.id: s for s in load_scenarios(pack)}
@@ -273,6 +274,21 @@ def create_app(
                 prompt_system=prompt[0],
                 prompt_user=prompt[1],
                 transitions=system.transitions(),
+            )
+
+    @app.get("/monitor", response_class=HTMLResponse)
+    def monitor_page():
+        """Read-only overview: counts, overdue cases, the latest eval report and recent audit rows."""
+        with lock:
+            cases, current = store.list(), now()
+            return page(
+                "monitor.html", "monitor",
+                states=monitor.state_counts(cases),
+                late=monitor.overdue(cases, current),
+                by_class=monitor.class_counts(cases),
+                report=monitor.latest_eval(eval_results),
+                events=audit.recent(20),
+                line=lambda c: queue_line(c, current),
             )
 
     @app.get("/", response_class=HTMLResponse)

@@ -132,7 +132,7 @@ def test_page_renders_lanes_and_header(console):
 
 def test_get_requests_never_change_state(console):
     before = console.audit_count()
-    pages = ["/", "/?msg=sent", "/new", "/system", "/health", "/static/style.css"]
+    pages = ["/", "/?msg=sent", "/new", "/system", "/monitor", "/health", "/static/style.css"]
     pages += [f"/cases/{c.id}" for c in console.store.list()]
     for url in pages:
         assert console.client.get(url).status_code == 200, url
@@ -670,3 +670,60 @@ def test_model_explanation_is_shown_truncated_and_never_audited(empty_console):
     rows = c.app.state.store.conn.execute("SELECT payload_json FROM audit").fetchall()
     assert rows and not any(marker in r[0] for r in rows)
     assert marker not in case.draft  # never used in a reply
+
+
+# --- Monitor -------------------------------------------------------------------------------------
+def monitor_html(console):
+    return console.client.get("/monitor").text
+
+
+def test_monitor_shows_counts_overdue_and_nav_order(console):
+    html = monitor_html(console)
+    nav = html.split('aria-label="Pages">', 1)[1].split("</nav>", 1)[0]
+    assert [m for m in re.findall(r">(\w+)</a>", nav)] == ["Setup", "Review", "Monitor"]
+    assert 'aria-current="page">Monitor</a>' in nav
+    for n, label in ((5, "Urgent (escalated)"), (7, "Ready to approve"), (3, "Needs a person"), (0, "Sent"),
+                     (0, "Taken by a person")):
+        assert f"<li><strong>{n}</strong> {label}</li>" in html
+    assert "<strong>1</strong> Overdue" in html and ">T03 · fraud report · " in html
+    assert "<td>fraud_report</td><td>3</td><td>0</td>" in html
+    assert "Pause: <strong>OFF</strong>" in html and f"<code>{console.app.state.config.version}</code>" in html
+    assert "<form" not in html.split("</header>", 1)[1] and 'class="sidebar"' not in html
+
+
+def test_monitor_shows_the_latest_eval_report_from_the_repo(console):
+    html = monitor_html(console)
+    eval_section = html.split('<section id="eval">', 1)[1].split("</section>", 1)[0]
+    assert "2026-11-02 · openai_main · test split, 38 tickets" in eval_section  # test wins over dev on a tie
+    assert "<td>0 (target 0)</td>" in eval_section and "<td>0 of 19 tickets" in eval_section
+    assert "<td>37 of 38</td>" in eval_section and "<code>cb16d991171f</code>" in eval_section
+    assert "Eval ran on an older config." in eval_section  # the live config has changed since
+
+
+def test_monitor_without_a_report_and_with_a_matching_one(tmp_path):
+    app = create_app(db_path=":memory:", reviewer_id=REVIEWER, llm=FakeLLM(), now=lambda: NOW,
+                     seed_tickets=None, eval_results=tmp_path)
+    client = TestClient(app)
+    assert "No evaluation report found" in client.get("/monitor").text
+    version = app.state.config.version
+    (tmp_path / "fake-dev-2026-11-08.md").write_text(
+        "# Evaluation: fake, split dev, 2026-11-08\n\n| Setting | Value |\n| --- | --- |\n"
+        f"| config_version | `{version}` |\n\n| Metric | Value |\n| --- | --- |\n| tickets | 62 |\n"
+        "| class_accuracy | 0.500 |\n| risky_drafted | 2 |\n| pii_tickets | 32 |\n| pii_leak_rate | 0.000 |\n",
+        encoding="utf-8")
+    html = client.get("/monitor").text
+    assert "Eval ran on an older config" not in html and "<td>31 of 62</td>" in html
+    assert "regression check, not a result" in html  # a test-model run is labeled as such
+
+
+def test_monitor_recent_audit_events_are_newest_first_and_hold_no_text(empty_console):
+    c = empty_console
+    marker = "zq-monitor-55"
+    typed(c, f"How do I get my invoice? {marker}")
+    c.post("/pause", paused="on")
+    html = monitor_html(c)
+    audit = html.split('<section id="audit">', 1)[1].split("</section>", 1)[0]
+    rows = re.findall(r"<tr>\s*<td>", audit)
+    assert len(rows) == min(20, c.audit_count())
+    assert audit.index("pause_on") < audit.index("received")  # newest first
+    assert marker not in html

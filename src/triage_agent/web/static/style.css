@@ -173,3 +173,11 @@ summary { cursor: pointer; }
 .edit-here { margin: .75rem 0 0; color: var(--muted); font-size: .9em; }
 .prompt { margin: .3rem 0 .6rem; padding: .7rem .85rem; background: var(--surface-2); border-radius: 8px; font-size: .85em; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tpl { margin: .4rem 0; }
+
+/* Monitor page: plain counts, no charts */
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: .6rem; list-style: none; margin: 0; padding: 0; }
+.stats li { padding: .6rem .8rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--muted); font-size: .9em; line-height: 1.35; }
+.stats strong { display: block; font-size: 1.5rem; color: var(--text); }
+.stats li.is-late { border-color: var(--warn); background: var(--warn-soft); }
+.late-list { margin: .75rem 0 0; padding-left: 1.2rem; }
+.warn-note { margin: 0 0 .75rem; padding: .5rem .85rem; border-left: 3px solid var(--warn); background: var(--warn-soft); }
