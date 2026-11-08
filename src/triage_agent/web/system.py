@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from urllib.parse import urlparse
 
-from ..config import UNCLEAR, Config
+from ..config import UNCLEAR, Config, parse_duration
 from ..models import ALLOWED_TRANSITIONS
 from ..providers.registry import effective_params
 
@@ -36,6 +36,34 @@ def provider_rows(config: Config, chain: list[str], env: Mapping[str, str]) -> l
     return rows
 
 
+TEST_MODEL = "test model (no real AI)"
+
+
+def human_duration(value: str) -> str:
+    """ "PT1H" -> "1 hour", "P15D" -> "15 days", "PT24H" -> "1 day". Text that is not a duration is shown as is."""
+    try:
+        delta = parse_duration(value)
+    except ValueError:
+        return value
+    minutes = int(delta.total_seconds()) // 60
+    days, rest = divmod(minutes, 24 * 60)
+    hours, mins = divmod(rest, 60)
+    parts = [f"{n} {unit}{'' if n == 1 else 's'}" for n, unit in ((days, "day"), (hours, "hour"), (mins, "minute")) if n]
+    return " ".join(parts) or value
+
+
+RISK_LABELS = {"locked": "locked: always a person", "normal": "normal"}
+REPLY_LABELS = {"template": "approved template", "none": "no draft: a person replies"}
+
+
+def provider_label(config: Config, pid: str) -> str:
+    """Plain name for the header and sidebar: the offline fake is called what it is."""
+    spec = config.models.providers.get(pid)
+    if (spec is not None and spec.kind == "fake") or pid == "FakeLLM":  # FakeLLM: an injected test double
+        return TEST_MODEL
+    return pid
+
+
 def model_summary(config: Config, pid: str) -> str:
     """Short config text for one provider, used in the trail's config column."""
     spec = config.models.providers.get(pid)
@@ -54,8 +82,9 @@ def class_rows(config: Config) -> list[dict]:
         ids = {ref.id for ref in cls.templates}
         langs = sorted({lang for (tid, lang) in config.templates if tid in ids})
         rows.append({
-            "name": cls.name, "priority": cls.priority, "team": cls.team, "deadline": cls.deadline,
-            "risk": cls.risk, "draft_mode": cls.draft_mode, "templates": len(ids),
+            "name": cls.name, "priority": cls.priority, "team": cls.team, "deadline": human_duration(cls.deadline),
+            "risk": RISK_LABELS.get(cls.risk, cls.risk), "draft_mode": REPLY_LABELS.get(cls.draft_mode, cls.draft_mode),
+            "templates": len(ids), "description": cls.description, "locked": cls.locked,
             "languages": ", ".join(langs) or "-", "builtin": cls.name == UNCLEAR,
         })
     return rows

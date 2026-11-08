@@ -27,7 +27,7 @@ def test_fraud_rule_case(make_env):
     assert steps[1:] == [
         ("rule fraud_keywords fired", DONE),
         ("skipped: rule fired", SKIPPED),
-        ("no draft: locked class", SKIPPED),
+        ("no draft: rule fraud_keywords fired", SKIPPED),
         ("escalated: waiting for Take case", TURN),
         ("no reply: handled by a person", SKIPPED),
     ]

@@ -142,8 +142,8 @@ def create_app(
     store, audit = SQLiteCaseStore(conn), AuditLog(conn, config.version)
     source = MockTicketSource([])
     llm = llm or build_llm(config)  # fails at startup with a clear message if a key variable is unset
-    model_label = llm.describe() if isinstance(llm, FallbackChain) else type(llm).__name__
     model_ids = llm.ids if isinstance(llm, FallbackChain) else [type(llm).__name__]
+    model_label = ", then ".join(system.provider_label(config, pid) for pid in model_ids)
     pipeline = Pipeline(config, llm, store, audit)
     gate = Gate(store, audit, source, config)
     reviewer = reviewer_id or os.environ.get("TRIAGE_REVIEWER", "demo-reviewer")
@@ -251,12 +251,12 @@ def create_app(
                 "system.html", "system",
                 flow=system.flow_rows(config, model_ids),
                 threshold=config.settings.confidence_threshold,
-                unclear_deadline=config.settings.unclear_deadline,
+                unclear_deadline=system.human_duration(config.settings.unclear_deadline),
                 reviewer=reviewer,
                 providers=system.provider_rows(config, model_ids, os.environ),
                 classes=system.class_rows(config),
                 rules=system.rule_rows(config),
-                deadlines={name: cls.deadline for name, cls in config.classes.items()},
+                deadlines={name: system.human_duration(cls.deadline) for name, cls in config.classes.items()},
                 transitions=system.transitions(),
             )
 

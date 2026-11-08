@@ -4,7 +4,7 @@
   {% include "banner.html" %}
   <h1>System</h1>
   <p>Everything on this page is read from the loaded config. It changes nothing.</p>
-  <p class="status-line">Model: {{ model_label }} · Config <code>{{ config_version }}</code> · Pause: <strong>{{ "ON" if paused else "OFF" }}</strong></p>
+  <p class="status-line">Model: {{ model_label }} · Config version <code>{{ config_version }}</code> · Pause: <strong>{{ "ON" if paused else "OFF" }}</strong></p>
 
   <section id="flow">
     <h2>Flow</h2>
@@ -21,29 +21,29 @@
   <section id="settings">
     <h2>Settings</h2>
     <div class="scroll"><table class="kv">
-      <tr><th>config_version</th><td><code>{{ config_version }}</code></td></tr>
+      <tr><th>Config version</th><td><code>{{ config_version }}</code></td></tr>
       <tr><th>Pause</th><td>{{ "ON: every ticket goes to a person unless a rule escalates it" if paused else "OFF" }}</td></tr>
-      <tr><th>confidence_threshold</th><td>{{ threshold }}</td></tr>
-      <tr><th>unclear_deadline</th><td>{{ unclear_deadline }}</td></tr>
+      <tr><th>Confidence needed for a draft</th><td>{{ threshold }}</td></tr>
+      <tr><th>Deadline for unclear messages</th><td>{{ unclear_deadline }}</td></tr>
       <tr><th>Reviewer id</th><td>{{ reviewer }}</td></tr>
     </table></div>
     <h3>Provider chain (tried in this order)</h3>
     <div class="scroll"><table>
-      <thead><tr><th>Id</th><th>Kind</th><th>Model</th><th>Host</th><th>Temperature</th><th>max_tokens</th><th>Timeout</th><th>Key variable</th></tr></thead>
+      <thead><tr><th>Id</th><th>Kind</th><th>Model</th><th>Host</th><th>Temperature</th><th>Max answer length (tokens)</th><th>Timeout</th><th>Key variable</th></tr></thead>
       <tbody>
         {% for p in providers %}
           <tr><td>{{ p.id }}</td><td>{{ p.kind }}</td><td>{{ p.model }}</td><td>{{ p.host }}</td><td>{{ p.temperature }}</td><td>{{ p.max_tokens }}</td><td>{{ p.timeout }}</td><td>{{ p.key }}</td></tr>
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="note">Settings are edited in the pack files. Restart, then check that config_version changed.</p>
+    <p class="note">Settings are edited in the pack files. Restart, then check that the config version changed.</p>
   </section>
 
   <section id="business-rules">
     <h2>Business rules</h2>
     <h3>Classes</h3>
     <div class="scroll"><table>
-      <thead><tr><th>Name</th><th>Priority</th><th>Team</th><th>Deadline</th><th>Risk</th><th>Draft mode</th><th>Templates</th><th>Languages</th></tr></thead>
+      <thead><tr><th>Name</th><th>Priority</th><th>Team</th><th>Deadline</th><th>Risk</th><th>Reply</th><th>Templates</th><th>Languages</th></tr></thead>
       <tbody>
         {% for c in classes %}
           <tr><td>{{ c.name }}{% if c.builtin %} (built in){% endif %}</td><td>{{ c.priority }}</td><td>{{ c.team }}</td><td>{{ c.deadline }}</td><td>{{ c.risk }}</td><td>{{ c.draft_mode }}</td><td>{{ c.templates }}</td><td>{{ c.languages }}</td></tr>
@@ -99,7 +99,7 @@
       <summary>Engineering: interfaces, states, audit and how to extend</summary>
       <ul>
         <li><strong>Interfaces:</strong> <code>TextModel.complete(system, user)</code> for models, <code>TicketSource</code> (fetch new tickets, send an approved reply) for the ticket system, <code>CaseStore</code> for storage (default SQLite).</li>
-        <li><strong>Audit:</strong> every step writes an audit row with the config_version. Rows hold ids, class names, confidence, hashes and short codes, never message text.</li>
+        <li><strong>Audit:</strong> every step writes an audit row with the config version. Rows hold ids, class names, confidence, hashes and short codes, never message text.</li>
         <li><strong>Fail closed:</strong> if masking fails, no model is called; if every provider fails or answers invalid JSON, the case goes to a person; a missing field or language means no draft; only the approval gate can send.</li>
         <li><strong>Add a class:</strong> a block in <code>pack/taxonomy.yaml</code>, a template per language in <code>pack/templates/</code>, and example tickets in <code>eval/tickets.jsonl</code>. The validator runs on start; then run <code>eval</code>.</li>
         <li><strong>Add a model:</strong> a block in <code>pack/models.yaml</code> for an OpenAI-compatible or Anthropic API, or a new adapter with one <code>complete()</code> method.</li>

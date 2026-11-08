@@ -23,12 +23,13 @@
     </details>
     <div class="status">
       <p>Model: <a href="/system#settings">{{ model_label }}</a></p>
-      <p>Config <code>{{ config_version }}</code></p>
+      <p>Config version <code>{{ config_version }}</code></p>
       <form method="post" action="/pause" class="pause {{ 'is-on' if paused else 'is-off' }}">
         <input type="hidden" name="paused" value="{{ 'off' if paused else 'on' }}">
         <span>Pause: <strong>{{ "ON" if paused else "OFF" }}</strong></span>
         <button type="submit">{{ "Resume" if paused else "Pause" }}</button>
       </form>
+      <p class="pause-help">Pause stops the AI for new messages: rules still escalate fraud and complaints, everything else goes to Needs a person. Cases already in the queue stay as they are.</p>
     </div>
   </aside>
 
@@ -56,13 +57,12 @@
       </div>
     {% else %}
       {% set c = selected %}
-      {% set turn = steps|selectattr("status", "equalto", "Your turn")|list %}
       <article class="card state-{{ c.state.value }}">
         <h1 class="ticket">{{ c.ticket_id }} <span>· {{ c.class_name }} · {{ due(c) }}</span></h1>
         <blockquote class="message" aria-label="Customer message">{{ ticket.text }}</blockquote>
 
         <details class="steps">
-          <summary>Steps · {{ c.reason }} · {{ "Your turn" if turn else "No action needed" }}</summary>
+          <summary>How this was decided · {{ c.reason }}</summary>
           {% include "journey.html" %}
           <p class="facts">{{ c.ticket_id }} ({{ c.language }}) · state <strong>{{ c.state.value }}</strong> ·
             class <strong>{{ c.class_name }}{% if c.subtype %} / {{ c.subtype }}{% endif %}</strong> ·
@@ -124,7 +124,7 @@
 
         {% if c.state.value in ("drafted", "needs_person") %}
           <details class="secondary">
-            <summary>Something wrong?</summary>
+            <summary>{{ "Change class" if blocked else "Change class or escalate" }}</summary>
             {% if c.state.value == "drafted" or blocked %}
               <form method="post" action="/cases/{{ c.id }}/class" class="inline">
                 <label for="new_class">Wrong class:</label>

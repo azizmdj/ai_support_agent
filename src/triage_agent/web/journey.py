@@ -137,6 +137,11 @@ def journey(case: Case, rows: list[AuditEvent], ctx: Context | None = None) -> l
             why = _NO_DRAFT[row.payload["reason_code"]]
             if row.payload.get("reason_code") == "no_draft_class" and row.payload.get("class") == UNCLEAR:
                 why = "class unclear"
+            if rule and row.payload.get("reason_code") in {"locked_class", "rule_escalation"}:
+                # The pipeline records the locked class first, but what the reader needs is that a rule fired.
+                template = _step(4, f"no draft: rule {rule.payload.get('rule_id')} fired", SKIPPED, tpl_input,
+                                 rules_cfg)
+                continue
             template = _step(4, f"no draft: {why}", SKIPPED, tpl_input, "risk flag and draft mode in taxonomy.yaml")
     steps.append(template)
 

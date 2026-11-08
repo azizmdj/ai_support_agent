@@ -113,8 +113,9 @@ def test_page_renders_lanes_and_header(console):
     assert '<a href="/" aria-current="page">Review</a>' in header and '<a href="/system" >System</a>' in header
     assert "<button" not in header and "<form" not in header  # the header holds only the name and links
     status = html.split('<div class="status">', 1)[1].split("</div>", 1)[0]  # sidebar footer
-    assert 'Model: <a href="/system#settings">FakeLLM</a>' in status
-    assert f"Config <code>{console.app.state.config.version}</code>" in status
+    assert 'Model: <a href="/system#settings">test model (no real AI)</a>' in status
+    assert f"Config version <code>{console.app.state.config.version}</code>" in status
+    assert "Pause stops the AI for new messages: rules still escalate fraud and complaints" in status
     assert "Pause: <strong>OFF</strong>" in status
     assert status.count("<button") == 1 and 'action="/pause"' in status  # the pause switch lives here
     assert '<a href="/system">System</a>' not in status  # the header link is the only System link
@@ -164,7 +165,7 @@ def test_each_card_has_exactly_one_primary_button(console, tid, state, primary):
     html = console.client.get(f"/cases/{case.id}").text
     assert html.count('class="primary"') == 1
     assert f'<button type="submit" class="primary">{primary}</button>' in html
-    secondary = html.split("<summary>Something wrong?</summary>", 1)
+    secondary = html.split("<summary>Change class or escalate</summary>", 1)
     if state == "escalated":
         assert len(secondary) == 1  # no secondary actions on an escalated case
     else:
@@ -178,7 +179,7 @@ def test_missing_field_case_offers_escalate_not_set_class(console):
     assert html.count('class="primary"') == 1
     assert '<button type="submit" class="primary">Escalate to a person</button>' in html
     assert "Set class and draft" not in html and 'id="set_class"' not in html
-    secondary = html.split("<summary>Something wrong?</summary>", 1)[1].split("</details>", 1)[0]
+    secondary = html.split("<summary>Change class</summary>", 1)[1].split("</details>", 1)[0]
     assert "Change class" in secondary and "Escalate" not in secondary  # escalate is already the main action
 
 
@@ -209,12 +210,14 @@ def test_trail_links_to_system_anchors(console):
     for actor in ("Customer", "Code", "AI", "Reviewer"):
         assert f'<span class="actor">{actor}</span>' in html
     card = html.split('<article class="card', 1)[1]
-    # Order: message, collapsed Steps, draft and the one primary button, then "Something wrong?".
-    order = ['class="message"', '<details class="steps">', 'class="draft"', 'class="primary"', "Something wrong?"]
+    # Order: message, collapsed "How this was decided", draft and the one primary button, then the secondary actions.
+    order = ['class="message"', '<details class="steps">', 'class="draft"', 'class="primary"',
+             "Change class or escalate"]
     assert [card.index(x) for x in order] == sorted(card.index(x) for x in order)
     steps = card.split('<details class="steps">', 1)[1]
     summary = steps.split("<summary>", 1)[1].split("</summary>", 1)[0]
-    assert summary.startswith("Steps · ") and summary.endswith(" · Your turn")
+    assert summary == "How this was decided · model: fee_question 0.90"
+    assert card.count("Your turn") == 1  # once per card: the step that waits for the reviewer
     assert "state <strong>drafted</strong>" in steps and "team " in steps  # the facts live inside Steps
     assert "What each step saw and produced" in steps and "Names and free-text addresses are not masked." in steps
     assert "<summary>Audit log (" in steps.split("What each step saw and produced", 1)[1]  # nested, collapsed
@@ -224,11 +227,12 @@ def test_trail_links_to_system_anchors(console):
 
 def test_steps_summary_carries_the_reason_and_status(console):
     escalated = console.client.get("/cases/case-T03").text
-    assert "<summary>Steps · rule fraud_keywords · Your turn</summary>" in escalated
+    assert "<summary>How this was decided · rule fraud_keywords</summary>" in escalated
+    assert escalated.count("Your turn") == 1
     case = console.case("T01")
     console.post(f"/cases/{case.id}/approve", draft_hash=case.draft_hash, body=case.draft)
     sent = console.client.get(f"/cases/{case.id}").text
-    assert "· No action needed</summary>" in sent and "Status: <strong>Your turn</strong>" not in sent
+    assert "Your turn" not in sent and "has left the queue" in sent
 
 
 def test_relative_due():
