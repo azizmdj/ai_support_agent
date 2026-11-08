@@ -2,12 +2,21 @@
 {% block body %}
 <main class="system">
   {% include "banner.html" %}
-  <h1>System</h1>
-  <p>Everything on this page is read from the loaded config. It changes nothing.</p>
+  <h1>Setup</h1>
+  <p>Everything on this page is read from the loaded config. Nothing here can be changed in the browser.</p>
   <p class="status-line">Model: {{ model_label }} · Config version <code>{{ config_version }}</code> · Pause: <strong>{{ "ON" if paused else "OFF" }}</strong></p>
 
+  <details class="block" id="how" open>
+    <summary>How it works</summary>
+    <ol class="how">
+      <li><strong>Rules first.</strong> Keyword rules send fraud and complaints straight to a person. No AI is involved.</li>
+      <li><strong>The AI only classifies.</strong> It sees a masked copy of the message and picks a class. It never writes the reply.</li>
+      <li><strong>A person approves.</strong> Replies come from approved templates, and nothing is sent until a reviewer approves it.</li>
+    </ol>
+  </details>
+
   <section id="flow">
-    <h2>Flow</h2>
+    <h2>The six steps of every message</h2>
     <div class="scroll"><table>
       <thead><tr><th>Step</th><th>Who</th><th>What it does</th><th>Input -&gt; output</th><th>Controlled by</th></tr></thead>
       <tbody>
@@ -18,16 +27,17 @@
     </table></div>
   </section>
 
-  <section id="settings">
-    <h2>Settings</h2>
+  <h2>What is configured</h2>
+
+  <details class="block" id="settings">
+    <summary>AI model and threshold</summary>
     <div class="scroll"><table class="kv">
-      <tr><th>Config version</th><td><code>{{ config_version }}</code></td></tr>
-      <tr><th>Pause</th><td>{{ "ON: every ticket goes to a person unless a rule escalates it" if paused else "OFF" }}</td></tr>
       <tr><th>Confidence needed for a draft</th><td>{{ threshold }}</td></tr>
-      <tr><th>Deadline for unclear messages</th><td>{{ unclear_deadline }}</td></tr>
+      <tr><th>Pause</th><td>{{ "ON: the AI is not called; everything a rule does not escalate goes to a person" if paused else "OFF" }}</td></tr>
       <tr><th>Reviewer id</th><td>{{ reviewer }}</td></tr>
+      <tr><th>Config version</th><td><code>{{ config_version }}</code></td></tr>
     </table></div>
-    <h3>Provider chain (tried in this order)</h3>
+    <h3>Models, tried in this order</h3>
     <div class="scroll"><table>
       <thead><tr><th>Id</th><th>Kind</th><th>Model</th><th>Host</th><th>Temperature</th><th>Max answer length (tokens)</th><th>Timeout</th><th>Key variable</th></tr></thead>
       <tbody>
@@ -36,31 +46,80 @@
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="note">Settings are edited in the pack files. Restart, then check that the config version changed.</p>
-  </section>
+    <p class="edit-here">Change this in <code>pack/models.yaml</code> (models) and <code>pack/settings.yaml</code> (threshold), then restart. <code>TRIAGE_PROVIDER</code> overrides the model order for one run.</p>
+  </details>
 
-  <section id="business-rules">
-    <h2>Business rules</h2>
-    <h3>Classes</h3>
+  <details class="block" id="classes">
+    <summary>Classes ({{ classes|length }}): what the AI is told</summary>
+    <p>The descriptions below are the class list in the AI prompt.</p>
     <div class="scroll"><table>
-      <thead><tr><th>Name</th><th>Priority</th><th>Team</th><th>Deadline</th><th>Risk</th><th>Reply</th><th>Templates</th><th>Languages</th></tr></thead>
+      <thead><tr><th>Name</th><th>Description</th><th>Priority</th><th>Team</th><th>Risk</th><th>Reply</th><th>Languages</th></tr></thead>
       <tbody>
         {% for c in classes %}
-          <tr><td>{{ c.name }}{% if c.builtin %} (built in){% endif %}</td><td>{{ c.priority }}</td><td>{{ c.team }}</td><td>{{ c.deadline }}</td><td>{{ c.risk }}</td><td>{{ c.draft_mode }}</td><td>{{ c.templates }}</td><td>{{ c.languages }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table></div>
-    <h3>Rules (run before the model; when one fires, the model is not called)</h3>
-    <div class="scroll"><table>
-      <thead><tr><th>Id</th><th>Action</th><th>Target class</th><th>Keywords</th><th>Languages</th></tr></thead>
-      <tbody>
-        {% for r in rules %}
-          <tr><td>{{ r.id }}</td><td>{{ r.action }}</td><td>{{ r.target }}</td><td>{{ r.keywords }}</td><td>{{ r.languages }}</td></tr>
+          <tr><td>{{ c.name }}{% if c.builtin %} (built in){% endif %}</td><td>{{ c.description }}</td><td>{{ c.priority }}</td><td>{{ c.team }}</td><td>{{ c.risk }}</td><td>{{ c.draft_mode }}</td><td>{{ c.languages }}</td></tr>
         {% endfor %}
       </tbody>
     </table></div>
     <p class="note">Fraud and complaint classes are locked: they never get a draft, and the validator rejects any config that changes this.</p>
-  </section>
+    <p class="edit-here">Change this in <code>pack/taxonomy.yaml</code>, then restart.</p>
+  </details>
+
+  <details class="block" id="rule-list">
+    <summary>Rules ({{ rules|length }}) and their keywords</summary>
+    <p>Rules run before the AI. When one fires, the message goes straight to a person and the AI is not called.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Id</th><th>Sends to</th><th>Languages</th><th>Keywords and patterns</th></tr></thead>
+      <tbody>
+        {% for r in rules %}
+          <tr><td>{{ r.id }}</td><td>{{ r.target }}</td><td>{{ r.languages }}</td><td>{% for pat in r.patterns %}<code>{{ pat }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    <p class="hint">A keyword matches at the start of a word, ignoring case and accents (ß counts as ss). <code>re:</code> marks a regular expression.</p>
+    <p class="edit-here">Change this in <code>pack/rules.yaml</code>, then restart.</p>
+  </details>
+
+  <details class="block" id="prompt">
+    <summary>The exact AI prompt</summary>
+    <p>Built from the classes above by the same code the classifier uses. The message is a placeholder; this page calls no model. The test model does not use a prompt: it matches keywords.</p>
+    <h3>System prompt</h3>
+    <pre class="prompt">{{ prompt_system }}</pre>
+    <h3>User prompt</h3>
+    <pre class="prompt">{{ prompt_user }}</pre>
+    <p class="edit-here">Change the class descriptions in <code>pack/taxonomy.yaml</code>, then restart. The fixed wording lives in code (<code>src/triage_agent/llm.py</code>).</p>
+  </details>
+
+  <details class="block" id="templates">
+    <summary>Approved reply templates ({{ templates|length }})</summary>
+    {% for t in templates %}
+      <details class="tpl">
+        <summary><code>{{ t.id }}</code> · {{ t.lang }} · needs: {{ t.fields }}</summary>
+        <pre class="prompt">{{ t.body }}</pre>
+        <p class="hint">File: <code>{{ t.file }}</code></p>
+      </details>
+    {% endfor %}
+    <p class="edit-here">Change this in <code>pack/templates/&lt;language&gt;/&lt;id&gt;.md</code>, then restart.</p>
+  </details>
+
+  <details class="block" id="fields">
+    <summary>Template fields and the AI-assistance note</summary>
+    <p>A template may only use these ticket fields. The message text is never a field.</p>
+    <p>{% for f in allowed_fields %}<code>{{ f }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    <h3>Added by code to every draft</h3>
+    <div class="scroll"><table class="kv">
+      {% for lang, line in disclosure %}<tr><th>{{ lang }}</th><td>{{ line }}</td></tr>{% endfor %}
+    </table></div>
+    <p class="edit-here">Change this in <code>pack/settings.yaml</code>, then restart.</p>
+  </details>
+
+  <details class="block" id="deadlines">
+    <summary>Deadlines</summary>
+    <p>Counted from when the message arrives, in calendar time.</p>
+    <div class="scroll"><table class="kv">
+      {% for c in classes %}<tr><th>{{ c.name }}</th><td>{{ c.deadline }}</td></tr>{% endfor %}
+    </table></div>
+    <p class="edit-here">Change this in <code>pack/taxonomy.yaml</code> (the unclear deadline: <code>pack/settings.yaml</code>), then restart.</p>
+  </details>
 
   <section id="explain">
     <h2>Explain</h2>

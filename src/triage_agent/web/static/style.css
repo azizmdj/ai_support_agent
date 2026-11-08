@@ -163,3 +163,13 @@ summary { cursor: pointer; }
 .ai-box dd { margin: 0; overflow-wrap: anywhere; }
 .ai-box .hint { font-size: .85em; }
 @media (max-width: 760px) { .ai-box dl { grid-template-columns: 1fr; } .ai-box dd { margin-bottom: .3rem; } }
+
+/* Setup page: one collapsed block per config area; "How it works" starts open */
+.block { margin: 1rem 0; padding: .6rem .9rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.block > summary { font-weight: 600; }
+.block[open] > summary { margin-bottom: .5rem; }
+.how { margin: 0; padding-left: 1.3rem; }
+.how li { margin: .2rem 0; }
+.edit-here { margin: .75rem 0 0; color: var(--muted); font-size: .9em; }
+.prompt { margin: .3rem 0 .6rem; padding: .7rem .85rem; background: var(--surface-2); border-radius: 8px; font-size: .85em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tpl { margin: .4rem 0; }

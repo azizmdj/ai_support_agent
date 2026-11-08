@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from urllib.parse import urlparse
 
 from ..config import UNCLEAR, Config, parse_duration
+from ..llm import build_system_prompt, build_user_prompt
 from ..models import ALLOWED_TRANSITIONS
 from ..providers.registry import effective_params
 
@@ -92,7 +93,26 @@ def class_rows(config: Config) -> list[dict]:
 
 def rule_rows(config: Config) -> list[dict]:
     return [{"id": r.id, "action": r.action, "target": r.force_class, "keywords": len(r.patterns),
-             "languages": ", ".join(r.languages) if r.languages else "all"} for r in config.rules]
+             "patterns": r.patterns, "languages": ", ".join(r.languages) if r.languages else "all"}
+            for r in config.rules]
+
+
+def template_rows(config: Config) -> list[dict]:
+    """Every approved template file, in taxonomy order, with its text."""
+    order = {name: i for i, name in enumerate(config.classes)}
+    rows = sorted(config.templates.values(), key=lambda t: (order.get(t.class_name, 99), t.id, t.lang))
+    return [{"id": t.id, "class": t.class_name, "lang": t.lang, "fields": ", ".join(t.required_fields) or "-",
+             "body": t.body.strip("\n"), "file": f"pack/templates/{t.lang}/{t.id}.md"} for t in rows]
+
+
+PROMPT_PLACEHOLDER = "(the masked customer message goes here)"
+
+
+def classifier_prompt(config: Config) -> tuple[str, str]:
+    """The exact system and user prompt a real model receives, built by the same functions the classifier uses.
+    The message is a placeholder; nothing is sent anywhere."""
+    classes = [c for c in config.classes.values() if c.name != UNCLEAR]  # as in Pipeline._classify
+    return build_system_prompt(classes), build_user_prompt(PROMPT_PLACEHOLDER)
 
 
 def flow_rows(config: Config, chain: list[str]) -> list[dict]:

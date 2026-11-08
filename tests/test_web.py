@@ -110,7 +110,7 @@ def test_page_renders_lanes_and_header(console):
     html = console.client.get("/").text
     header = html.split("<header", 1)[1].split("</header>", 1)[0]
     assert "Unofficial demo, synthetic data" in header
-    assert '<a href="/" aria-current="page">Review</a>' in header and '<a href="/system" >System</a>' in header
+    assert '<a href="/system" >Setup</a>\n    <a href="/" aria-current="page">Review</a>' in header
     assert "<button" not in header and "<form" not in header  # the header holds only the name and links
     status = html.split('<div class="status">', 1)[1].split("</div>", 1)[0]  # sidebar footer
     assert 'Model: <a href="/system#settings">test model (no real AI)</a>' in status

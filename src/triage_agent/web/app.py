@@ -254,6 +254,8 @@ def create_app(
 
     @app.get("/system", response_class=HTMLResponse)
     def system_page():
+        """The Setup tab. Read-only; the prompt is rendered with a placeholder and no model is called."""
+        prompt = system.classifier_prompt(config)
         with lock:
             return page(
                 "system.html", "system",
@@ -265,6 +267,11 @@ def create_app(
                 classes=system.class_rows(config),
                 rules=system.rule_rows(config),
                 deadlines={name: system.human_duration(cls.deadline) for name, cls in config.classes.items()},
+                templates=system.template_rows(config),
+                allowed_fields=config.settings.allowed_fields,
+                disclosure=sorted(config.settings.ai_disclosure.items()),
+                prompt_system=prompt[0],
+                prompt_user=prompt[1],
                 transitions=system.transitions(),
             )
 
