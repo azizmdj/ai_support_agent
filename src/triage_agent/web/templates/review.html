@@ -5,8 +5,8 @@
     <a class="new" href="/new" {% if not selected %}aria-current="page"{% endif %}>New message</a>
     <details class="queue" open>
       <summary>Queue ({{ total }})</summary>
-      {% for key, title, cases in lanes %}
-        <details class="lane lane-{{ key }}" open>
+      {% for key, title, cases, is_open in lanes %}
+        <details class="lane lane-{{ key }}"{% if is_open %} open{% endif %}>
           <summary>{{ title }} ({{ cases|length }})</summary>
           {% if cases %}
             <ul>

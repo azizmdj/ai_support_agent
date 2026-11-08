@@ -62,6 +62,7 @@ LANES = [
     ("ready", "Ready to approve", CaseState.DRAFTED),
     ("needs", "Needs a person", CaseState.NEEDS_PERSON),
 ]
+DONE_STATES = {CaseState.SENT: "sent", CaseState.TAKEN: "taken"}  # the Done lane: closed, newest first
 
 
 class ScenarioVariant(BaseModel):
@@ -124,8 +125,9 @@ def class_label(name: str | None) -> str:
 
 
 def queue_line(case: Case, now: datetime) -> str:
-    """One short line per queue item, e.g. "T03 · fraud report · 1h late"."""
-    return f"{case.ticket_id} · {class_label(case.class_name)} · {short_due(case.due_at, now)}"
+    """One short line per queue item, e.g. "T03 · fraud report · 1h late"; a closed case shows its outcome."""
+    tail = DONE_STATES.get(case.state) or short_due(case.due_at, now)
+    return f"{case.ticket_id} · {class_label(case.class_name)} · {tail}"
 
 
 def create_app(
@@ -169,10 +171,12 @@ def create_app(
     def lanes() -> dict[str, list[Case]]:
         cases = store.list()
         far = datetime.max.replace(tzinfo=timezone.utc)
-        return {
+        open_lanes = {
             key: sorted((c for c in cases if c.state == state), key=lambda c: (c.due_at or far, c.id))
             for key, _, state in LANES
         }
+        done = sorted((c for c in cases if c.state in DONE_STATES), key=lambda c: c.received_at, reverse=True)
+        return {**open_lanes, "done": done}
 
     def next_case_id(skip: str | None = None) -> str | None:
         """Urgent first, then Ready, then Needs a person. Prefer a case other than the one just handled."""
@@ -215,8 +219,9 @@ def create_app(
             scenarios=list(scenarios.values()),
             languages=languages,
             max_chars=MAX_MESSAGE_CHARS,
-            lanes=[(key, title, all_lanes[key]) for key, title, _ in LANES],
-            total=sum(len(v) for v in all_lanes.values()),
+            lanes=[(key, title, all_lanes[key], True) for key, title, _ in LANES]
+            + [("done", "Done", all_lanes["done"], bool(selected and selected.state in DONE_STATES))],
+            total=sum(len(all_lanes[key]) for key, _, _ in LANES),
             selected=selected,
             ticket=ticket,
             events=events,

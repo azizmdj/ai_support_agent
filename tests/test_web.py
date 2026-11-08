@@ -310,7 +310,8 @@ def test_approve_unchanged_draft(console):
     assert console.store.get(case.id).state == CaseState.SENT
     html = console.client.get(location).text
     assert "Reply sent via mock ticket system." in html
-    assert not in_queue(html, "T01")  # sent cases leave the lanes
+    assert not in_queue(html, "T01")  # sent cases leave the open lanes...
+    assert ">T01 · fee question · sent</a>" in lane_html(html, "done")  # ...and show up under Done
 
 
 def test_approve_with_edited_text(console):
@@ -639,3 +640,19 @@ def test_ai_box_without_a_model_call(empty_console):
     c.post("/pause", paused="on")
     paused = c.scenario("routine")
     assert "No AI call: triage was paused when this message arrived." in ai_box(c.client.get(f"/cases/{paused.id}").text)
+
+
+# --- Done lane -----------------------------------------------------------------------------------
+def test_done_lane_lists_sent_and_taken_cases_collapsed(console):
+    html = console.client.get("/").text
+    assert '<details class="lane lane-done">' in html and "<summary>Done (0)</summary>" in html
+    case = console.case("T01")
+    console.post(f"/cases/{case.id}/approve", draft_hash=case.draft_hash, body=case.draft)
+    console.post("/cases/case-T03/take")
+    html = console.client.get("/cases/case-T04").text
+    done = lane_html(html, "done")
+    assert '<details class="lane lane-done">' in html and "<summary>Done (2)</summary>" in done
+    assert ">T01 · fee question · sent</a>" in done and ">T03 · fraud report · taken</a>" in done
+    assert "<summary>Queue (13)</summary>" in html  # the queue count covers open cases only
+    # Opening a closed case opens the Done lane, so the selection is visible.
+    assert '<details class="lane lane-done" open>' in console.client.get("/cases/case-T01").text
