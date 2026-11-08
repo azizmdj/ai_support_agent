@@ -695,13 +695,29 @@ def test_monitor_shows_counts_overdue_and_nav_order(console):
     assert "<form" not in html.split("</header>", 1)[1] and 'class="sidebar"' not in html
 
 
+def eval_section(html):
+    return html.split('<section id="eval">', 1)[1].split("</section>", 1)[0]
+
+
 def test_monitor_shows_the_latest_eval_report_from_the_repo(console):
-    html = monitor_html(console)
-    eval_section = html.split('<section id="eval">', 1)[1].split("</section>", 1)[0]
-    assert "2026-11-02 · openai_main · test split, 38 tickets" in eval_section  # test wins over dev on a tie
-    assert "<td>0 (target 0)</td>" in eval_section and "<td>0 of 19 tickets" in eval_section
-    assert "<td>37 of 38</td>" in eval_section and "<code>cb16d991171f</code>" in eval_section
-    assert "Eval ran on an older config." in eval_section  # the live config has changed since
+    section = eval_section(monitor_html(console))
+    assert "2026-11-08 · openai_main · test split, 38 tickets" in section  # newest date; test wins over dev
+    assert "<td>0 (target 0)</td>" in section and "<td>0 of 19 tickets" in section
+    assert "<td>36 of 38</td>" in section and "<code>5c03d5c522f3</code>" in section
+    live = console.app.state.config.version
+    assert ("Eval ran on an older config." in section) == (live != "5c03d5c522f3")
+
+
+def test_monitor_notes_a_report_from_an_older_config(tmp_path):
+    results = Path(triage_agent.__file__).parents[2] / "eval" / "results"
+    for name in ("openai_main-dev-2026-11-02.md", "openai_main-test-2026-11-02.md"):
+        (tmp_path / name).write_text((results / name).read_text(encoding="utf-8"), encoding="utf-8")
+    app = create_app(db_path=":memory:", reviewer_id=REVIEWER, llm=FakeLLM(), now=lambda: NOW,
+                     seed_tickets=None, eval_results=tmp_path)
+    section = eval_section(TestClient(app).get("/monitor").text)
+    assert "2026-11-02 · openai_main · test split, 38 tickets" in section  # test wins over dev on a tie
+    assert "<td>37 of 38</td>" in section and "<code>cb16d991171f</code>" in section
+    assert "Eval ran on an older config." in section
 
 
 def test_monitor_without_a_report_and_with_a_matching_one(tmp_path):

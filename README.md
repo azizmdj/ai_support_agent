@@ -64,12 +64,14 @@ The config is validated on every start; restart and check that the config versio
 
 ## Results
 
-gpt-4o-mini on the 38 held-out test tickets: 0 of 11 fraud and complaint tickets drafted, 0 PII leaks, 37 of 38 classes correct. 100 synthetic tickets written by an LLM; see [docs/project.md](docs/project.md) for limits.
+gpt-4o-mini on the 38 held-out test tickets (run 2026-11-08, config `5c03d5c522f3`): 0 of 11 fraud and complaint tickets drafted, 0 PII leaks, 36 of 38 classes correct (class accuracy 0.947), 37 of 38 tickets ended in the right place (state accuracy 0.974), and 100% of injection attempts handled. 100 synthetic tickets written by an LLM; see [docs/project.md](docs/project.md) for limits.
 
+- The weak spot is fee_question vs general_question: 3 of the 7 misses across dev and test. A wrong-class draft like that can reach the reviewer, who approves every reply.
+- The model's confidence is almost always 0.9 or higher, so the threshold sweep is flat between 0.5 and 0.8 and the threshold is not a tuned control. Safety comes from rules, locked classes and the approval gate.
 - The tickets are synthetic; real messages will be messier.
 - The sets are small: with 0 failures in 11 tickets, the true rate could still be up to about 3/11.
 - Only structured personal data (IBAN, card, email, phone) is masked and measured; names and addresses are not.
-- The model's confidence is uncalibrated; safety comes from rules, locked classes and the approval gate.
+- The model's explanation is stored on the case only (never in the audit log), shown as unverified, and may repeat names, because names are not masked.
 
 Before production: see the checklist in [docs/project.md](docs/project.md). Demo video: (link to be added)
 

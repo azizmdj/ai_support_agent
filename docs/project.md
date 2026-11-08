@@ -334,45 +334,48 @@ The dev split was used to tune the prompt, so the test-only figure is the clean 
 
 **Results**
 
-Provider `openai_main` with model gpt-4o-mini, threshold 0.7, run on 2026-11-02. Dev v1 ran on config version `a74e7a29655e`; dev v2 and test share `cb16d991171f`. The numbers come from the reports in `eval/results/`.
+Provider `openai_main` with model gpt-4o-mini, threshold 0.7, run on 2026-11-08 on the live config version `5c03d5c522f3`. The numbers come from `eval/results/openai_main-dev-2026-11-08.md` and `eval/results/openai_main-test-2026-11-08.md`.
 
-The dev v2 and test runs were measured on `cb16d991171f`, before the Phase 5 changes to `pack/models.yaml` and `pack/rules.yaml`. The live eval has not been rerun since. Those changes are comment lines only, but they change the config version. The classifier prompt, the class descriptions, the rule keywords and the threshold are unchanged since the measured runs. The OpenAI adapter still sends the same defaults (temperature 0, 300 tokens, 20 s timeout), now read from the adapter defaults that `pack/models.yaml` can override.
+Class accuracy and state accuracy are different measures. Class accuracy counts tickets with the right class. State accuracy counts tickets that ended in the right place: drafted, escalated or with a person.
 
-| Metric | Dev v1 (62) | Dev v2 (62) | Test (38) |
-| --- | --- | --- | --- |
-| Class accuracy | 0.935 | 0.935 | 0.974 |
-| State accuracy | 0.968 | 0.968 | 1.000 |
-| Risky escalated rate | 1.000 | 1.000 | 1.000 |
-| Risky class recall | 1.000 | 1.000 | 1.000 |
-| Risky tickets drafted | 0 | 0 | 0 |
-| Wrong draft rate | 0.105 | 0.083 | 0.056 |
-| Coverage | 1.000 | 0.973 | 0.783 |
-| Template accuracy | 0.919 | 0.892 | 0.952 |
-| `unclear` recall | 0.750 | 0.875 | 1.000 |
-| PII leak rate | 0 (28 of 32 PII tickets reached the model) | 0 (28 of 32) | 0 (14 of 19) |
-| Injection pass rate | 1.0 | 1.0 | 1.0 |
-| Replies sent | 0 | 0 | 0 |
+| Metric | Dev (62) | Test (38) |
+| --- | --- | --- |
+| Class accuracy | 0.919 (57 of 62) | 0.947 (36 of 38) |
+| State accuracy | 0.952 (59 of 62) | 0.974 (37 of 38) |
+| Risky escalated rate | 1.000 | 1.000 |
+| Risky class recall | 1.000 | 1.000 |
+| Risky tickets drafted | 0 of 17 | 0 of 11 |
+| Wrong draft rate | 0.086 | 0.059 |
+| Coverage | 0.946 | 0.739 |
+| Template accuracy | 0.865 | 0.905 |
+| `unclear` recall | 0.875 | 1.000 |
+| PII leak rate | 0 (28 of 32 PII tickets reached the model) | 0 (14 of 19) |
+| Injection pass rate | 1.0 | 1.0 |
+| Replies sent | 0 | 0 |
 
-0 of 17 dev and 0 of 11 test fraud and complaint tickets were drafted. On the test split the one class miss was a fee question labeled `general_question`. Dev v1 used the original prompt. Dev v2 followed one calibration change to the classifier prompt and to two class descriptions.
+0 of 17 dev and 0 of 11 test fraud and complaint tickets were drafted. There are 7 misses in all, 5 in dev and 2 in test. The weak spot is fee_question vs general_question: 3 of the 7 misses (FQ04, FQ06, FQ13) are fee questions labeled `general_question`. They are also the only misses that produced a draft. A wrong-class draft like that can reach the reviewer, who approves every reply. The other 4 misses (GQ07, GQ09, UN12, PT13) ended with a person.
 
-**Why test coverage is 0.783.** The test split has 23 in-scope, non-risky tickets. 18 of them expect a draft and 5 expect a person: 3 have a missing field (CB03, CB10, PT05) and 2 are in a language without templates (CB05 in Turkish, CB15 in French). All 18 got a draft, so coverage is 18 of 23. State accuracy is 1.000, so these 5 ended with a person as expected.
+**Why test coverage is 0.739.** The test split has 23 in-scope, non-risky tickets. 18 of them expect a draft and 5 expect a person: 3 have a missing field (CB03, CB10, PT05) and 2 are in a language without templates (CB05 in Turkish, CB15 in French). 17 of the 18 got a draft, so coverage is 17 of 23. The one that did not, PT13, was labeled `unclear` and went to a person; it is the only state miss in the test split.
+
+**Earlier runs (2026-11-02).** Dev v1 ran on config `a74e7a29655e` with the original prompt. Dev v2 and the first test run ran on `cb16d991171f`, after one calibration change to the classifier prompt and to two class descriptions. The test split scored class accuracy 0.974 (37 of 38) and state accuracy 1.000 then. Since that run, the config changes are comment lines in `pack/models.yaml` and `pack/rules.yaml`. Those change the config version, but not the prompt, the class descriptions, the rule keywords or the threshold. The drop to 36 of 38 is one ticket (PT13) and is within run-to-run variation for a set this small. The reports stay in `eval/results/`.
 
 **Findings**
 
-- Self-reported confidence is uncalibrated. gpt-4o-mini reports about 0.9 or higher almost always, so the threshold has little effect.
+- Self-reported confidence is uncalibrated. gpt-4o-mini almost always reports 0.9 or higher, so the dev threshold sweep is flat between 0.5 and 0.8 (coverage 0.946, wrong draft rate 0.086 at every step). The threshold is not a tuned control.
 - Safety comes from the rules, the locked classes and the approval gate, not from the threshold.
 - The calibration change shifted errors toward human review and did not raise accuracy. One vague ticket moved from a wrong draft to a person, and one general question moved to a person.
 - A second signal, such as agreement between two providers or token log-probabilities, is a possible next step (planned, later).
 
 **Process**
 
-The dev split was used for tuning. The test split was run once, after dev was settled, and nothing changed afterwards. The fake provider is a regression guard only: its numbers are not results. It has a known gap: it drafts two keyword-free fraud reports in dev. A strict expected-failure test records the target of 0, so it fails loudly once the gap is closed.
+The dev split was used for tuning. The test split was first run after dev was settled. It was run again on 2026-11-08 to measure the live config version, with no prompt or class-description change in between, and nothing was tuned on it. The fake provider is a regression guard only: its numbers are not results. It has a known gap: it drafts two keyword-free fraud reports in dev. A strict expected-failure test records the target of 0, so it fails loudly once the gap is closed.
 
 **What the numbers do not show**
 
 - The tickets are synthetic and written by an LLM. Real messages will be messier.
 - The sets are small. One ticket moves a metric by about 1.6 points on dev and 2.6 points on test.
 - Only structured PII (IBAN, card, email, phone) is measured. Names and addresses are not.
+- The model's explanation is stored on the case only, never in the audit log, and is shown as unverified. It may repeat a customer's name, because names are not masked.
 - The calibration prompt names tax or legal advice as an example, which is also an eval category.
 - The result belongs to one model and one prompt.
 - The Anthropic adapter has not been run live.
@@ -529,7 +532,7 @@ Shorter unit tests cover config validation, template filling (a missing field or
 
 ## Decisions
 
-- **Confidence** is self-reported by the model, with a threshold of 0.7. It is not calibrated, and in the live run the threshold had little effect.
+- **Confidence** is self-reported by the model, with a threshold of 0.7. It is not calibrated: the model almost always reports 0.9 or higher, so the dev sweep is flat between 0.5 and 0.8 and the threshold is not a tuned control.
 - **Deadlines** are ISO 8601 durations (days, hours, minutes) in calendar time, UTC, counted from `received_at`.
 - **A two-issue ticket gets one label.** If the model is unsure between topics, low confidence sends it to a person.
 - **`config_version`** is the first 12 characters of a sha256 over all pack files, with line endings normalized.
@@ -542,12 +545,12 @@ Shorter unit tests cover config validation, template filling (a missing field or
 - **Coverage counts missing-field and other-language tickets,** so it cannot reach 1.0. State accuracy shows whether tickets ended where expected.
 - **The baseline comes from the fake provider.** Tests compare against it and never write it; `eval --write-baseline` updates it on purpose.
 - **Setup and Monitor are read-only.** They show the loaded config, the case counts and the latest evaluation, and change nothing. There is no editing UI: config belongs in git with review before merge, and a restart plus a new config version makes every change traceable.
-- **The model's explanation is shown, not logged.** The `reason` the model returns is kept on the case, cut to 300 characters, and shown in the AI decision box as "Model's explanation (unverified)". It is never written to the audit log or a log line and never used in a reply. It needed no schema change, because a case is stored as one JSON document.
+- **The model's explanation is shown, not logged.** The `reason` the model returns is kept on the case, cut to 300 characters, and shown in the AI decision box as "Model's explanation (unverified)". It is never written to the audit log or a log line and never used in a reply. It may repeat a name from the message, because names are not masked. It needed no schema change, because a case is stored as one JSON document.
 - **A missing field ends at a person.** When a template field or language is missing, the card offers Escalate as the main action; a class change stays available, because another class's template may need fewer fields.
 - **Rules only escalate.** The `route` action was never used and was removed; a pack that still uses it is rejected.
 - **The `demo` command is gone.** The console replaced it; the fixture outcomes are still checked by a test that runs the pipeline directly.
 - **The hosted demo is dropped.** A public demo needs hosting, TLS, an access code and spend limits. A recorded demo plus docker-compose serve the pitch better.
-- **Dev for tuning, test once.** Prompt and config changes are judged on the dev split; the test split is run once after dev is settled.
+- **Dev for tuning, test once.** Prompt and config changes are judged on the dev split; the test split is run after dev is settled, and only rerun to measure a new config version, never to tune.
 
 ## Before production
 
