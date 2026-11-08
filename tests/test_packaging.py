@@ -86,8 +86,16 @@ def test_dockerfile_basics():
 
 def test_dockerignore_keeps_secrets_and_local_state_out():
     lines = (REPO_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
-    for entry in (".git", ".venv", "__pycache__", ".pytest_cache", ".env", "*.env", "*.db", "eval/results"):
+    for entry in (".git", ".venv", "__pycache__", ".pytest_cache", ".env", "*.env", "*.db"):
         assert entry in lines, entry
+
+
+def test_image_includes_the_eval_reports_for_the_monitor_tab():
+    # The Monitor tab reads eval/results/; the reports hold metrics and ticket ids only, no message text or keys.
+    lines = [line.strip() for line in (REPO_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()]
+    assert not any(line.rstrip("/") in {"eval", "eval/results", "eval/results/*", "*.md"} for line in lines)
+    assert "COPY eval/ eval/" in (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert list((REPO_ROOT / "eval" / "results").glob("*.md"))  # there is a report to show
 
 
 def test_ci_runs_lint_and_tests_without_secrets():

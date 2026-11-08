@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block body %}
+<main class="system monitor">
+  <h1>Monitor</h1>
+  <p>A read-only overview for a team lead. It changes nothing.</p>
+  <p class="status-line">Pause: <strong>{{ "ON" if paused else "OFF" }}</strong> · Model: {{ model_label }} · Live config version <code>{{ config_version }}</code></p>
+
+  <section id="cases">
+    <h2>Cases</h2>
+    <ul class="stats">
+      {% for label, n in states %}<li><strong>{{ n }}</strong> {{ label }}</li>{% endfor %}
+      <li class="{{ 'is-late' if late }}"><strong>{{ late|length }}</strong> Overdue (open cases past their deadline)</li>
+    </ul>
+    {% if late %}
+      <ul class="late-list">
+        {% for c in late %}<li><a href="/cases/{{ c.id }}">{{ line(c) }}</a></li>{% endfor %}
+      </ul>
+    {% endif %}
+  </section>
+
+  <section id="by-class">
+    <h2>Cases by class</h2>
+    {% if by_class %}
+      <div class="scroll"><table>
+        <thead><tr><th>Class</th><th>Open</th><th>Done</th></tr></thead>
+        <tbody>{% for r in by_class %}<tr><td>{{ r.name }}</td><td>{{ r.open }}</td><td>{{ r.done }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+    {% else %}
+      <p class="note">No cases yet.</p>
+    {% endif %}
+  </section>
+
+  <section id="eval">
+    <h2>Latest evaluation</h2>
+    {% if report %}
+      {% if report.config_version != config_version %}
+        <p class="warn-note"><strong>Eval ran on an older config.</strong> The report used config version <code>{{ report.config_version or "unknown" }}</code>; the live config is <code>{{ config_version }}</code>. Rerun <code>eval</code> to measure the live config.</p>
+      {% endif %}
+      {% if report.fake %}
+        <p class="note">This run used the test model: it is a regression check, not a result.</p>
+      {% endif %}
+      <div class="scroll"><table class="kv">
+        <tr><th>Run</th><td>{{ report.date }} · {{ report.provider }} · {{ report.split }} split, {{ report.tickets }} tickets</td></tr>
+        <tr><th>Fraud and complaint tickets drafted</th><td>{{ report.risky_drafted }} (target 0)</td></tr>
+        <tr><th>Personal data leaks to the model</th><td>{{ report.pii_leaks }} of {{ report.pii_tickets }} tickets with seeded personal data</td></tr>
+        <tr><th>Classes correct</th><td>{{ report.classes_correct }} of {{ report.tickets }}</td></tr>
+        <tr><th>Config version of the run</th><td><code>{{ report.config_version or "unknown" }}</code></td></tr>
+        <tr><th>Report file</th><td><code>{{ report.file }}</code></td></tr>
+      </table></div>
+    {% else %}
+      <p class="note">No evaluation report found in <code>eval/results/</code>. Run <code>uv run python -m triage_agent eval</code> to make one.</p>
+    {% endif %}
+  </section>
+
+  <section id="audit">
+    <h2>Recent audit events ({{ events|length }})</h2>
+    <p class="hint">The newest first, across all cases. Audit rows hold ids, classes, confidence, codes and hashes, never message text.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Time (UTC)</th><th>Case</th><th>Actor</th><th>Event</th><th>Details</th></tr></thead>
+      <tbody>
+        {% for e in events %}
+          <tr>
+            <td>{{ e.ts[11:19] }}</td>
+            <td>{% if e.case_id == "global" %}-{% else %}<a href="/cases/{{ e.case_id }}">{{ e.case_id }}</a>{% endif %}</td>
+            <td>{{ e.actor }}</td><td>{{ e.event }}</td>
+            <td><code>{% for k, v in e.payload|dictsort %}{{ k }}={{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</code></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+</main>
+{% endblock %}

@@ -12,6 +12,7 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 # Code, pack and eval set. The fixture tickets seed the console on first start.
+# eval/ includes the committed reports in eval/results/, so the Monitor tab can show the latest one.
 COPY src/ src/
 COPY pack/ pack/
 COPY eval/ eval/

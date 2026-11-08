@@ -51,6 +51,7 @@ class Context:
     chain: str = ""
     masked: str | None = None  # computed on the fly from the stored ticket, never stored
     reviewer: str = ""
+    provider_labels: dict[str, str] = field(default_factory=dict)  # provider id -> plain name for the AI box
 
 
 def _step(number: int, result: str, status: str, input: str = "", config: str = "") -> Step:
@@ -81,7 +82,8 @@ def journey(case: Case, rows: list[AuditEvent], ctx: Context | None = None) -> l
     rule, paused = first("rule_matched"), first("held_paused")
     rules_input = "the message text (case and accents ignored)"
     if rule:
-        steps.append(_step(2, f"rule {rule.payload.get('rule_id')} fired", DONE, rules_input, rules_cfg))
+        steps.append(_step(2, rule_fired_text(rule.payload.get("rule_id"), case.rule_pattern), DONE, rules_input,
+                           rules_cfg))
     elif paused:
         steps.append(_step(2, "held: paused", DONE, rules_input, f"{rules_cfg}; pause switch on"))
     else:
@@ -137,6 +139,11 @@ def journey(case: Case, rows: list[AuditEvent], ctx: Context | None = None) -> l
             why = _NO_DRAFT[row.payload["reason_code"]]
             if row.payload.get("reason_code") == "no_draft_class" and row.payload.get("class") == UNCLEAR:
                 why = "class unclear"
+            if rule and row.payload.get("reason_code") in {"locked_class", "rule_escalation"}:
+                # The pipeline records the locked class first, but what the reader needs is that a rule fired.
+                template = _step(4, f"no draft: rule {rule.payload.get('rule_id')} fired", SKIPPED, tpl_input,
+                                 rules_cfg)
+                continue
             template = _step(4, f"no draft: {why}", SKIPPED, tpl_input, "risk flag and draft mode in taxonomy.yaml")
     steps.append(template)
 
@@ -170,3 +177,98 @@ def journey(case: Case, rows: list[AuditEvent], ctx: Context | None = None) -> l
         steps.append(_step(5, "waiting", PENDING))
         steps.append(_step(6, "not sent yet", PENDING))
     return steps
+
+
+# --- AI decision box ----------------------------------------------------------------------------
+@dataclass(frozen=True)
+class AIDecision:
+    """What the model did for this case, in plain words. Built from the case, its audit rows and the config."""
+
+    summary: str
+    rows: list[tuple[str, str]] = field(default_factory=list)  # (label, value), one line each
+    model_called: bool = False
+    facts: list[tuple[str, str]] = field(default_factory=list)  # short (label, value) pairs shown on one line
+
+
+BOX_TEXT_CHARS = 160  # the box shows the start of the masked text; the full text is under "How this was decided"
+
+
+def _short(text: str) -> str:
+    if len(text) <= BOX_TEXT_CHARS:
+        return text
+    return text[:BOX_TEXT_CHARS].rstrip() + "… (full text under How this was decided)"
+
+
+def rule_fired_text(rule_id: object, pattern: str | None) -> str:
+    """'rule fraud_keywords fired on the keyword "betrug"': the pattern comes from the config, not the message."""
+    text = f"rule {rule_id} fired"
+    if pattern:
+        kind = "pattern" if pattern.startswith("re:") else "keyword"
+        text += f" on the {kind} \"{pattern}\""
+    return text
+
+
+_AI_SUMMARY = {
+    "model": "The AI picked a class with enough confidence.",
+    "low_confidence": "The AI was not sure enough, so a person decides.",
+    "model_unclear": "The AI could not tell which class this is, so a person decides.",
+    "unknown_label": "The AI answered with a class that does not exist, so a person decides.",
+}
+
+
+def ai_decision(case: Case, rows: list[AuditEvent], ctx: Context | None = None) -> AIDecision:
+    ctx = ctx or Context()
+    first = {}
+    for row in rows:
+        first.setdefault(row.event, row)
+
+    rule = first.get("rule_matched")
+    if rule:
+        text = rule_fired_text(rule.payload.get("rule_id"), case.rule_pattern)
+        return AIDecision(f"No AI call: {text}" + (" from pack/rules.yaml." if case.rule_pattern else "."))
+    if "held_paused" in first:
+        return AIDecision("No AI call: triage was paused when this message arrived.")
+    if "mask_failed" in first:
+        return AIDecision("No AI call: masking personal data failed, so nothing was sent to a model.")
+
+    saw = [("The model saw", _short(ctx.masked) if ctx.masked is not None else "the masked message")]
+    error = first.get("model_error")
+    if error:
+        return AIDecision(f"The AI call failed ({error.payload.get('reason_code')}), so a person decides.",
+                          saw, True, [("Models tried", ctx.chain or "-")])
+    classified = first.get("classified")
+    if not classified:
+        return AIDecision("The AI has not run for this case yet.")
+
+    p = classified.payload
+    reason = p.get("reason_code")
+    if reason == "unknown_label":
+        predicted = "not a known class"
+    else:
+        predicted = (case.predicted_class or p.get("class") or "-").replace("_", " ")
+        if p.get("subtype"):
+            predicted += f" / {str(p['subtype']).replace('_', ' ')}"
+    conf = p.get("confidence")
+    confidence = f"{conf:.2f}" if isinstance(conf, (int, float)) else "-"
+    if ctx.threshold is not None:
+        confidence += f", needs {ctx.threshold:.2f}"
+    provider = p.get("provider") or ""
+    facts = [
+        ("Predicted class", predicted),
+        ("Confidence", confidence),
+        ("Answered by", ctx.provider_labels.get(provider, provider) or "-"),
+    ]
+    out = list(saw)
+    if case.model_explanation:
+        out.append(("Model's explanation (unverified)", case.model_explanation))
+    summary = _AI_SUMMARY.get(reason, "The AI classified this message.")
+    blocked = first.get("draft_blocked")
+    if (reason == "model" and blocked and blocked.actor == "pipeline" and case.state == CaseState.NEEDS_PERSON
+            and "class_corrected" not in first):
+        if blocked.payload.get("reason_code") == "missing_field":
+            summary = ("The AI picked a class with enough confidence, but a required detail is missing "
+                       f"({blocked.payload.get('field')}), so no draft was made.")
+        else:
+            summary = ("The AI picked a class with enough confidence, but there is no approved template "
+                       f"in this language ({blocked.payload.get('lang')}), so no draft was made.")
+    return AIDecision(summary, out, True, facts)

@@ -5,37 +5,31 @@
     <a class="new" href="/new" {% if not selected %}aria-current="page"{% endif %}>New message</a>
     <details class="queue" open>
       <summary>Queue ({{ total }})</summary>
-      {% for key, title, cases in lanes %}
-        <section class="lane lane-{{ key }}">
-          <h2>{{ title }} <span class="count">({{ cases|length }})</span></h2>
+      {% for key, title, cases, is_open in lanes %}
+        <details class="lane lane-{{ key }}"{% if is_open %} open{% endif %}>
+          <summary>{{ title }} ({{ cases|length }})</summary>
           {% if cases %}
             <ul>
               {% for c in cases %}
                 {% set is_sel = selected and c.id == selected.id %}
-                <li class="{{ 'selected' if is_sel }}">
-                  <a href="/cases/{{ c.id }}" {% if is_sel %}aria-current="true"{% endif %}>
-                    {% if is_sel %}<span class="marker">Open:</span>{% endif %}
-                    <span class="tid">{{ c.ticket_id }}</span>
-                    <span class="cls">{{ c.class_name }}</span>
-                    <span class="due">{{ due(c) }}</span>
-                  </a>
-                </li>
+                <li{% if is_sel %} class="selected"{% endif %}><a href="/cases/{{ c.id }}"{% if is_sel %} aria-current="true"{% endif %}>{{ line(c) }}</a></li>
               {% endfor %}
             </ul>
           {% else %}
             <p class="empty">None</p>
           {% endif %}
-        </section>
+        </details>
       {% endfor %}
     </details>
     <div class="status">
       <p>Model: <a href="/system#settings">{{ model_label }}</a></p>
-      <p>Config <code>{{ config_version }}</code></p>
+      <p>Config version <code>{{ config_version }}</code></p>
       <form method="post" action="/pause" class="pause {{ 'is-on' if paused else 'is-off' }}">
         <input type="hidden" name="paused" value="{{ 'off' if paused else 'on' }}">
         <span>Pause: <strong>{{ "ON" if paused else "OFF" }}</strong></span>
         <button type="submit">{{ "Resume" if paused else "Pause" }}</button>
       </form>
+      <p class="pause-help">Pause stops the AI for new messages: rules still escalate fraud and complaints, everything else goes to Needs a person. Cases already in the queue stay as they are.</p>
     </div>
   </aside>
 
@@ -63,13 +57,21 @@
       </div>
     {% else %}
       {% set c = selected %}
-      {% set turn = steps|selectattr("status", "equalto", "Your turn")|list %}
       <article class="card state-{{ c.state.value }}">
         <h1 class="ticket">{{ c.ticket_id }} <span>· {{ c.class_name }} · {{ due(c) }}</span></h1>
         <blockquote class="message" aria-label="Customer message">{{ ticket.text }}</blockquote>
 
+        <section class="ai-box" aria-label="AI decision">
+          <p class="ai-summary"><span class="ai-title">AI decision</span> {{ ai.summary }}</p>
+          {% if ai.facts %}
+            <p class="ai-facts">{% for label, value in ai.facts %}<span><span class="k">{{ label }}:</span> {{ value }}</span>{% endfor %}</p>
+          {% endif %}
+          {% for label, value in ai.rows %}<p class="ai-row"><span class="k">{{ label }}:</span> {{ value }}</p>{% endfor %}
+          {% if ai.model_called %}<p class="hint">Masked before the call: IBAN, card, email, phone. Not names or addresses.</p>{% endif %}
+        </section>
+
         <details class="steps">
-          <summary>Steps · {{ c.reason }} · {{ "Your turn" if turn else "No action needed" }}</summary>
+          <summary>How this was decided · {{ c.reason }}</summary>
           {% include "journey.html" %}
           <p class="facts">{{ c.ticket_id }} ({{ c.language }}) · state <strong>{{ c.state.value }}</strong> ·
             class <strong>{{ c.class_name }}{% if c.subtype %} / {{ c.subtype }}{% endif %}</strong> ·
@@ -104,7 +106,7 @@
         {% if c.state.value == "drafted" %}
           <form method="post" action="/cases/{{ c.id }}/approve" class="draft">
             <label for="body">Draft reply <span class="hint">(template {{ c.template_id }}{% if c.edited %}, edited{% endif %}; edit if needed)</span></label>
-            <textarea id="body" name="body" rows="12">{{ c.draft }}</textarea>
+            <textarea id="body" name="body" rows="8">{{ c.draft }}</textarea>
             <input type="hidden" name="draft_hash" value="{{ c.draft_hash }}">
             <button type="submit" class="primary">Approve and send</button>
           </form>
@@ -112,6 +114,11 @@
           <p class="note">No template and no draft: a person handles this case directly.</p>
           <form method="post" action="/cases/{{ c.id }}/take" class="act">
             <button type="submit" class="primary">Take case</button>
+          </form>
+        {% elif c.state.value == "needs_person" and blocked %}
+          <p class="note">{{ blocked }}</p>
+          <form method="post" action="/cases/{{ c.id }}/escalate" class="act">
+            <button type="submit" class="primary">Escalate to a person</button>
           </form>
         {% elif c.state.value == "needs_person" %}
           <p class="note">No draft. Pick the right class to create one.</p>
@@ -126,17 +133,19 @@
 
         {% if c.state.value in ("drafted", "needs_person") %}
           <details class="secondary">
-            <summary>Something wrong?</summary>
-            {% if c.state.value == "drafted" %}
+            <summary>{{ "Change class" if blocked else "Change class or escalate" }}</summary>
+            {% if c.state.value == "drafted" or blocked %}
               <form method="post" action="/cases/{{ c.id }}/class" class="inline">
                 <label for="new_class">Wrong class:</label>
                 <select id="new_class" name="new_class">{% for cls in classes %}<option value="{{ cls.name }}" {% if cls.name == c.class_name %}selected{% endif %}>{{ cls.name }}{% if cls.risk == "locked" %} (locked, escalates){% endif %}</option>{% endfor %}</select>
                 <button type="submit">Change class</button>
               </form>
             {% endif %}
-            <form method="post" action="/cases/{{ c.id }}/escalate" class="inline">
-              <button type="submit">Escalate to a person</button>
-            </form>
+            {% if not blocked %}
+              <form method="post" action="/cases/{{ c.id }}/escalate" class="inline">
+                <button type="submit">Escalate to a person</button>
+              </form>
+            {% endif %}
           </details>
         {% endif %}
       </article>

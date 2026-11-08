@@ -1,6 +1,6 @@
 import re
 import socket
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -10,10 +10,10 @@ from fastapi.testclient import TestClient
 import triage_agent
 from triage_agent.audit import AuditLog
 from triage_agent.llm import FakeLLM
-from triage_agent.models import CaseState
+from triage_agent.models import CaseState, ClassifierResult
 from triage_agent.pipeline import Pipeline
 from triage_agent.store import SQLiteCaseStore, connect
-from triage_agent.web.app import create_app, relative_due
+from triage_agent.web.app import create_app, relative_due, short_due
 from triage_agent.web.journey import STEPS
 
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
@@ -59,10 +59,20 @@ def empty_console():
     return Console(seed=False)
 
 
+LANE_KEYS = ("urgent", "ready", "needs")
+
+
+def lane_html(html, key):
+    return html.split(f'class="lane lane-{key}"', 1)[1].split("</details>", 1)[0]
+
+
+def in_queue(html, ticket_id):
+    return any(f">{ticket_id} · " in lane_html(html, key) for key in LANE_KEYS)
+
+
 def lane_of(html, ticket_id):
-    for key in ("urgent", "ready", "needs"):
-        section = html.split(f'class="lane lane-{key}"', 1)[1].split("</section>", 1)[0]
-        if f">{ticket_id}<" in section:
+    for key in LANE_KEYS:
+        if f">{ticket_id} · " in lane_html(html, key):
             return key
     return None
 
@@ -86,26 +96,35 @@ def test_seed_shifts_fixtures_so_newest_is_now(console):
     assert max(c.received_at for c in cases) == NOW
 
 
+def test_seeded_queue_has_at_most_one_overdue_case(console):
+    overdue = [c for c in console.store.list() if c.due_at < NOW]
+    assert [(c.ticket_id, c.class_name) for c in overdue] == [("T03", "fraud_report")]
+    assert NOW - overdue[0].due_at >= timedelta(minutes=15)  # clearly late, not by a minute
+    due_soon = [c for c in console.store.list() if NOW <= c.due_at <= NOW + timedelta(hours=4)]
+    assert len(due_soon) >= 4  # the other fraud reports and the card cases are due soon
+    html = console.client.get("/").text
+    assert html.count(" late</a>") == 1
+
+
 def test_page_renders_lanes_and_header(console):
     html = console.client.get("/").text
     header = html.split("<header", 1)[1].split("</header>", 1)[0]
     assert "Unofficial demo, synthetic data" in header
-    assert '<a href="/" aria-current="page">Review</a>' in header and '<a href="/system" >System</a>' in header
+    assert '<a href="/system" >Setup</a>\n    <a href="/" aria-current="page">Review</a>' in header
     assert "<button" not in header and "<form" not in header  # the header holds only the name and links
     status = html.split('<div class="status">', 1)[1].split("</div>", 1)[0]  # sidebar footer
-    assert 'Model: <a href="/system#settings">FakeLLM</a>' in status
-    assert f"Config <code>{console.app.state.config.version}</code>" in status
+    assert 'Model: <a href="/system#settings">test model (no real AI)</a>' in status
+    assert f"Config version <code>{console.app.state.config.version}</code>" in status
+    assert "Pause stops the AI for new messages: rules still escalate fraud and complaints" in status
     assert "Pause: <strong>OFF</strong>" in status
     assert status.count("<button") == 1 and 'action="/pause"' in status  # the pause switch lives here
     assert '<a href="/system">System</a>' not in status  # the header link is the only System link
     assert '<a class="new" href="/new" >New message</a>' in html  # a case is open, so not the current page
     assert '<details class="queue" open>' in html and "<summary>Queue (15)</summary>" in html
     assert 'class="pill"' not in html  # test-message buttons live on /new only
-    for title in ("Urgent", "Ready to approve", "Needs a person"):
-        assert title in html
-    assert "Urgent <span class=\"count\">(5)</span>" in html
-    assert "Ready to approve <span class=\"count\">(7)</span>" in html
-    assert "Needs a person <span class=\"count\">(3)</span>" in html
+    assert '<details class="lane lane-urgent" open>\n          <summary>Urgent (5)</summary>' in html
+    assert "<summary>Ready to approve (7)</summary>" in html
+    assert "<summary>Needs a person (3)</summary>" in html
     # Default selection is the most urgent case: fraud has the shortest deadline.
     assert 'aria-current="true"' in html
     assert "https://" not in html and "<script" not in html  # no CDN, no JavaScript
@@ -113,7 +132,7 @@ def test_page_renders_lanes_and_header(console):
 
 def test_get_requests_never_change_state(console):
     before = console.audit_count()
-    pages = ["/", "/?msg=sent", "/new", "/system", "/health", "/static/style.css"]
+    pages = ["/", "/?msg=sent", "/new", "/system", "/monitor", "/health", "/static/style.css"]
     pages += [f"/cases/{c.id}" for c in console.store.list()]
     for url in pages:
         assert console.client.get(url).status_code == 200, url
@@ -136,19 +155,52 @@ def test_message_reason_and_payload_text_are_escaped(console):
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html and "&lt;b&gt;tpl&lt;/b&gt;" in html
 
 
-@pytest.mark.parametrize("state,primary", [
-    ("drafted", "Approve and send"), ("needs_person", "Set class and draft"), ("escalated", "Take case"),
+@pytest.mark.parametrize("tid,state,primary", [
+    ("T01", "drafted", "Approve and send"), ("T12", "needs_person", "Set class and draft"),
+    ("T03", "escalated", "Take case"),
 ])
-def test_each_card_has_exactly_one_primary_button(console, state, primary):
-    case = next(c for c in console.store.list() if c.state.value == state)
+def test_each_card_has_exactly_one_primary_button(console, tid, state, primary):
+    case = console.case(tid)
+    assert case.state.value == state
     html = console.client.get(f"/cases/{case.id}").text
     assert html.count('class="primary"') == 1
     assert f'<button type="submit" class="primary">{primary}</button>' in html
-    secondary = html.split("<summary>Something wrong?</summary>", 1)
+    secondary = html.split("<summary>Change class or escalate</summary>", 1)
     if state == "escalated":
         assert len(secondary) == 1  # no secondary actions on an escalated case
     else:
         assert "Escalate to a person" in secondary[1].split("</details>", 1)[0]
+
+
+def test_missing_field_case_offers_escalate_not_set_class(console):
+    case = console.case("T09")  # card_blocked, card_last4 missing
+    html = console.client.get(f"/cases/{case.id}").text
+    assert "A required detail is missing, so no draft can be made. Ask the customer or escalate." in html
+    assert html.count('class="primary"') == 1
+    assert '<button type="submit" class="primary">Escalate to a person</button>' in html
+    assert "Set class and draft" not in html and 'id="set_class"' not in html
+    secondary = html.split("<summary>Change class</summary>", 1)[1].split("</details>", 1)[0]
+    assert "Change class" in secondary and "Escalate" not in secondary  # escalate is already the main action
+
+
+def test_class_banner_only_says_moved_when_the_lane_changed(console):
+    case = console.case("T12")  # unclear; has no plan_name
+    # A class whose template needs a missing field: the case stays and opens again with an honest banner.
+    location = console.post(f"/cases/{case.id}/class", new_class="fee_question")
+    assert location == f"/cases/{case.id}?msg=corrected_stayed"
+    assert console.store.get(case.id).state == CaseState.NEEDS_PERSON
+    html = console.client.get(location).text
+    assert "The case stays in Needs a person." in html and "moved to the lane" not in html
+    assert "A required detail is missing" in html
+    # T09 (PIN template needs card_last4): the class change still works, because the default template does not.
+    t09 = console.case("T09")
+    assert console.post(f"/cases/{t09.id}/class", new_class="card_blocked").endswith("?msg=corrected")
+    assert console.store.get(t09.id).state == CaseState.DRAFTED
+    # Drafted to another drafting class: a new draft in the same lane.
+    t01 = console.case("T01")
+    assert console.post(f"/cases/{t01.id}/class", new_class="general_question") == f"/cases/{t01.id}?msg=redrafted"
+    # A real lane change keeps the old banner and moves on.
+    assert console.post(f"/cases/{t01.id}/class", new_class="complaint").endswith("?msg=corrected")
 
 
 def test_trail_links_to_system_anchors(console):
@@ -158,12 +210,14 @@ def test_trail_links_to_system_anchors(console):
     for actor in ("Customer", "Code", "AI", "Reviewer"):
         assert f'<span class="actor">{actor}</span>' in html
     card = html.split('<article class="card', 1)[1]
-    # Order: message, collapsed Steps, draft and the one primary button, then "Something wrong?".
-    order = ['class="message"', '<details class="steps">', 'class="draft"', 'class="primary"', "Something wrong?"]
+    # Order: message, collapsed "How this was decided", draft and the one primary button, then the secondary actions.
+    order = ['class="message"', 'class="ai-box"', '<details class="steps">', 'class="draft"', 'class="primary"',
+             "Change class or escalate"]
     assert [card.index(x) for x in order] == sorted(card.index(x) for x in order)
     steps = card.split('<details class="steps">', 1)[1]
     summary = steps.split("<summary>", 1)[1].split("</summary>", 1)[0]
-    assert summary.startswith("Steps · ") and summary.endswith(" · Your turn")
+    assert summary == "How this was decided · model: fee_question 0.90"
+    assert card.count("Your turn") == 1  # once per card: the step that waits for the reviewer
     assert "state <strong>drafted</strong>" in steps and "team " in steps  # the facts live inside Steps
     assert "What each step saw and produced" in steps and "Names and free-text addresses are not masked." in steps
     assert "<summary>Audit log (" in steps.split("What each step saw and produced", 1)[1]  # nested, collapsed
@@ -173,17 +227,35 @@ def test_trail_links_to_system_anchors(console):
 
 def test_steps_summary_carries_the_reason_and_status(console):
     escalated = console.client.get("/cases/case-T03").text
-    assert "<summary>Steps · rule fraud_keywords · Your turn</summary>" in escalated
+    assert "<summary>How this was decided · rule fraud_keywords</summary>" in escalated
+    assert escalated.count("Your turn") == 1
     case = console.case("T01")
     console.post(f"/cases/{case.id}/approve", draft_hash=case.draft_hash, body=case.draft)
     sent = console.client.get(f"/cases/{case.id}").text
-    assert "· No action needed</summary>" in sent and "Status: <strong>Your turn</strong>" not in sent
+    assert "Your turn" not in sent and "has left the queue" in sent
 
 
 def test_relative_due():
     assert relative_due(datetime(2026, 11, 2, 13, 30, tzinfo=timezone.utc), NOW) == "due in 1h 30m"
     assert relative_due(datetime(2026, 11, 2, 11, 55, tzinfo=timezone.utc), NOW) == "overdue by 5m"
     assert relative_due(datetime(2026, 11, 5, 14, 0, tzinfo=timezone.utc), NOW) == "due in 3d 2h"
+
+
+def test_short_due_and_queue_line():
+    assert short_due(datetime(2026, 11, 2, 14, 30, tzinfo=timezone.utc), NOW) == "due in 2h"
+    assert short_due(datetime(2026, 11, 2, 10, 40, tzinfo=timezone.utc), NOW) == "1h late"
+    assert short_due(datetime(2026, 11, 2, 11, 55, tzinfo=timezone.utc), NOW) == "5m late"
+    assert short_due(datetime(2026, 11, 5, 14, 0, tzinfo=timezone.utc), NOW) == "due in 3d"
+    assert short_due(None, NOW) == "no deadline"
+
+
+def test_queue_item_is_one_short_line(console):
+    html = console.client.get("/").text
+    urgent = lane_html(html, "urgent")
+    items = re.findall(r"<li[^>]*><a [^>]*>([^<]*)</a></li>", urgent)
+    assert len(items) == 5 and all(re.fullmatch(r"T\d\d · [a-z ]+ · (due in \d+[mhd]|\d+[mhd] late)", i) for i in items)
+    assert any(" · fraud report · " in i for i in items)  # underscores become spaces
+    assert "<span" not in urgent and "Open:" not in urgent  # nothing else in an item
 
 
 # --- Scenarios ---------------------------------------------------------------------------------
@@ -238,7 +310,8 @@ def test_approve_unchanged_draft(console):
     assert console.store.get(case.id).state == CaseState.SENT
     html = console.client.get(location).text
     assert "Reply sent via mock ticket system." in html
-    assert ">T01<" not in html  # sent cases leave the lanes
+    assert not in_queue(html, "T01")  # sent cases leave the open lanes...
+    assert ">T01 · fee question · sent</a>" in lane_html(html, "done")  # ...and show up under Done
 
 
 def test_approve_with_edited_text(console):
@@ -337,7 +410,7 @@ def test_take_case(console):
     console.post("/cases/case-T03/take")
     assert console.store.get("case-T03").state == CaseState.TAKEN
     assert console.events("case-T03")[-1] == "taken"
-    assert ">T03<" not in console.client.get("/").text
+    assert not in_queue(console.client.get("/").text, "T03")
 
 
 # --- Pause ---------------------------------------------------------------------------------------
@@ -402,7 +475,7 @@ def test_empty_queue_page(empty_console):
     assert "Queue is empty. Send a test message to see" in main
     assert '<a href="/system#flow">how a ticket moves</a>' in main
     assert main.count('class="pill"') == 4 and "<article" not in main and 'class="primary"' not in main
-    assert "Ready to approve <span class=\"count\">(0)</span>" in html
+    assert "<summary>Ready to approve (0)</summary>" in html
 
 
 def test_new_message_home_screen(console):
@@ -523,3 +596,180 @@ def test_css_has_dark_mode_and_no_external_resources(console):
     css = console.client.get("/static/style.css").text
     assert "@media (prefers-color-scheme: dark)" in css
     assert "url(" not in css and "@import" not in css and "@keyframes" not in css and "transition" not in css
+
+
+# --- AI decision box ---------------------------------------------------------------------------------
+def ai_box(html):
+    return html.split('<section class="ai-box"', 1)[1].split("</section>", 1)[0]
+
+
+def test_ai_box_for_a_drafted_case(console):
+    box = ai_box(console.client.get("/cases/case-T01").text)
+    assert "The AI picked a class with enough confidence." in box
+    assert '<span class="k">Predicted class:</span> fee question</span>' in box
+    assert '<span class="k">Confidence:</span> 0.90, needs 0.70</span>' in box
+    assert '<span class="k">Answered by:</span>' in box  # the injected test double has no provider id; see the next test
+    assert '<p class="ai-row"><span class="k">The model saw:</span> Hi, which fees apply to my account?' in box
+    assert '<span class="ai-title">AI decision</span>' in box and "<h2>" not in box  # compact: no heading block
+
+
+def test_ai_box_names_the_provider_from_the_chain():
+    app = create_app(db_path=":memory:", reviewer_id=REVIEWER, now=lambda: NOW)  # default chain: fake
+    box = ai_box(TestClient(app).get("/cases/case-T01").text)
+    assert '<span class="k">Answered by:</span> test model (no real AI)</span>' in box
+
+
+def test_ai_box_for_a_rule_case_names_the_config_keyword(console):
+    box = ai_box(console.client.get("/cases/case-T04").text)  # "BETRUG!!! ..."
+    assert 'No AI call: rule fraud_keywords fired on the keyword &#34;betrug&#34; from pack/rules.yaml.' in box
+    assert "ai-facts" not in box and "ai-row" not in box  # one line, no model rows
+    steps = console.client.get("/cases/case-T04").text.split('<details class="steps">', 1)[1]
+    assert 'rule fraud_keywords fired on the keyword &#34;betrug&#34;</span>' in steps  # Step 2 of the trail too
+    regex = console.app.state.pipeline.process(ticket("I did not authorize this payment", id="RX"))
+    box = ai_box(console.client.get(f"/cases/{regex.id}").text)
+    assert r"on the pattern &#34;re:\bdid not (make|authori[sz]e)\b&#34;" in box
+
+
+def test_ai_box_keeps_the_predicted_class_for_low_confidence(empty_console):
+    case = typed(empty_console, "My transfer is pending and which fees apply?")  # two topics -> 0.5
+    assert (case.class_name, case.predicted_class) == ("unclear", "pending_transfer")
+    box = ai_box(empty_console.client.get(f"/cases/{case.id}").text)
+    assert "The AI was not sure enough, so a person decides." in box
+    assert '<span class="k">Predicted class:</span> pending transfer</span>' in box
+    assert '<span class="k">Confidence:</span> 0.50, needs 0.70</span>' in box
+
+
+def test_ai_box_without_a_model_call(empty_console):
+    c = empty_console
+    c.post("/pause", paused="on")
+    paused = c.scenario("routine")
+    assert "No AI call: triage was paused when this message arrived." in ai_box(c.client.get(f"/cases/{paused.id}").text)
+
+
+# --- Done lane -----------------------------------------------------------------------------------
+def test_done_lane_lists_sent_and_taken_cases_collapsed(console):
+    html = console.client.get("/").text
+    assert '<details class="lane lane-done">' in html and "<summary>Done (0)</summary>" in html
+    case = console.case("T01")
+    console.post(f"/cases/{case.id}/approve", draft_hash=case.draft_hash, body=case.draft)
+    console.post("/cases/case-T03/take")
+    html = console.client.get("/cases/case-T04").text
+    done = lane_html(html, "done")
+    assert '<details class="lane lane-done">' in html and "<summary>Done (2)</summary>" in done
+    assert ">T01 · fee question · sent</a>" in done and ">T03 · fraud report · taken</a>" in done
+    assert "<summary>Queue (13)</summary>" in html  # the queue count covers open cases only
+    # Opening a closed case opens the Done lane, so the selection is visible.
+    assert '<details class="lane lane-done" open>' in console.client.get("/cases/case-T01").text
+
+
+# --- Model explanation (case store only) ---------------------------------------------------------
+def test_model_explanation_is_shown_truncated_and_never_audited(empty_console):
+    c = empty_console
+    marker = "zq-explain-91"
+    c.llm._script = [ClassifierResult(label="general_question", confidence=0.95, reason=f"{marker} " + "x" * 400)]
+    case = typed(c, "How do I get my invoice?")
+    assert case.model_explanation.startswith(marker) and len(case.model_explanation) == 300
+    box = ai_box(c.client.get(f"/cases/{case.id}").text)
+    assert f'<span class="k">Model&#39;s explanation (unverified):</span> {marker} ' in box
+    rows = c.app.state.store.conn.execute("SELECT payload_json FROM audit").fetchall()
+    assert rows and not any(marker in r[0] for r in rows)
+    assert marker not in case.draft  # never used in a reply
+
+
+# --- Monitor -------------------------------------------------------------------------------------
+def monitor_html(console):
+    return console.client.get("/monitor").text
+
+
+def test_monitor_shows_counts_overdue_and_nav_order(console):
+    html = monitor_html(console)
+    nav = html.split('aria-label="Pages">', 1)[1].split("</nav>", 1)[0]
+    assert [m for m in re.findall(r">(\w+)</a>", nav)] == ["Setup", "Review", "Monitor"]
+    assert 'aria-current="page">Monitor</a>' in nav
+    for n, label in ((5, "Urgent (escalated)"), (7, "Ready to approve"), (3, "Needs a person"), (0, "Sent"),
+                     (0, "Taken by a person")):
+        assert f"<li><strong>{n}</strong> {label}</li>" in html
+    assert "<strong>1</strong> Overdue" in html and ">T03 · fraud report · " in html
+    assert "<td>fraud_report</td><td>3</td><td>0</td>" in html
+    assert "Pause: <strong>OFF</strong>" in html and f"<code>{console.app.state.config.version}</code>" in html
+    assert "<form" not in html.split("</header>", 1)[1] and 'class="sidebar"' not in html
+
+
+def eval_section(html):
+    return html.split('<section id="eval">', 1)[1].split("</section>", 1)[0]
+
+
+def test_monitor_shows_the_latest_eval_report_from_the_repo(console):
+    section = eval_section(monitor_html(console))
+    assert "2026-11-08 · openai_main · test split, 38 tickets" in section  # newest date; test wins over dev
+    assert "<td>0 (target 0)</td>" in section and "<td>0 of 19 tickets" in section
+    assert "<td>36 of 38</td>" in section and "<code>5c03d5c522f3</code>" in section
+    live = console.app.state.config.version
+    assert ("Eval ran on an older config." in section) == (live != "5c03d5c522f3")
+
+
+def test_monitor_notes_a_report_from_an_older_config(tmp_path):
+    results = Path(triage_agent.__file__).parents[2] / "eval" / "results"
+    for name in ("openai_main-dev-2026-11-02.md", "openai_main-test-2026-11-02.md"):
+        (tmp_path / name).write_text((results / name).read_text(encoding="utf-8"), encoding="utf-8")
+    app = create_app(db_path=":memory:", reviewer_id=REVIEWER, llm=FakeLLM(), now=lambda: NOW,
+                     seed_tickets=None, eval_results=tmp_path)
+    section = eval_section(TestClient(app).get("/monitor").text)
+    assert "2026-11-02 · openai_main · test split, 38 tickets" in section  # test wins over dev on a tie
+    assert "<td>37 of 38</td>" in section and "<code>cb16d991171f</code>" in section
+    assert "Eval ran on an older config." in section
+
+
+def test_monitor_without_a_report_and_with_a_matching_one(tmp_path):
+    app = create_app(db_path=":memory:", reviewer_id=REVIEWER, llm=FakeLLM(), now=lambda: NOW,
+                     seed_tickets=None, eval_results=tmp_path)
+    client = TestClient(app)
+    assert "No evaluation report found" in client.get("/monitor").text
+    version = app.state.config.version
+    (tmp_path / "fake-dev-2026-11-08.md").write_text(
+        "# Evaluation: fake, split dev, 2026-11-08\n\n| Setting | Value |\n| --- | --- |\n"
+        f"| config_version | `{version}` |\n\n| Metric | Value |\n| --- | --- |\n| tickets | 62 |\n"
+        "| class_accuracy | 0.500 |\n| risky_drafted | 2 |\n| pii_tickets | 32 |\n| pii_leak_rate | 0.000 |\n",
+        encoding="utf-8")
+    html = client.get("/monitor").text
+    assert "Eval ran on an older config" not in html and "<td>31 of 62</td>" in html
+    assert "regression check, not a result" in html  # a test-model run is labeled as such
+
+
+def test_monitor_recent_audit_events_are_newest_first_and_hold_no_text(empty_console):
+    c = empty_console
+    marker = "zq-monitor-55"
+    typed(c, f"How do I get my invoice? {marker}")
+    c.post("/pause", paused="on")
+    html = monitor_html(c)
+    audit = html.split('<section id="audit">', 1)[1].split("</section>", 1)[0]
+    rows = re.findall(r"<tr>\s*<td>", audit)
+    assert len(rows) == min(20, c.audit_count())
+    assert audit.index("pause_on") < audit.index("received")  # newest first
+    assert marker not in html
+
+
+def test_ai_box_says_when_a_confident_class_is_blocked_by_a_missing_field(console):
+    box = ai_box(console.client.get("/cases/case-T09").text)
+    assert ("The AI picked a class with enough confidence, but a required detail is missing (card_last4), "
+            "so no draft was made.") in box
+    assert "The AI picked a class with enough confidence." not in box
+    # After a reviewer changes the class, the box goes back to the plain model summary.
+    console.post("/cases/case-T09/class", new_class="card_blocked")
+    assert "but a required detail is missing" not in ai_box(console.client.get("/cases/case-T09").text)
+
+
+def test_ai_box_shortens_long_masked_text(empty_console):
+    case = typed(empty_console, "How do I get my invoice? " + "please " * 60)
+    html = empty_console.client.get(f"/cases/{case.id}").text
+    assert "… (full text under How this was decided)" in ai_box(html)
+    assert "please " * 59 + "please" in html.split('<details class="steps">', 1)[1]  # the full masked text is still shown
+
+
+def test_sidebar_footer_text_wraps(console):
+    css = console.client.get("/static/style.css").text
+    # The trail's nowrap rule must not match the sidebar footer <div class="status">.
+    assert "\n.status { white-space: nowrap; }" not in css and ".step .status { white-space: nowrap; }" in css
+    footer = css.split(".sidebar > .status {", 1)[1].split("}", 1)[0]
+    assert "white-space: normal" in footer and "min-width: 0" in footer
+    assert "grid-template-columns: 17rem minmax(0, 1fr)" in css

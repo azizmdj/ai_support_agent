@@ -74,6 +74,11 @@ class Case(BaseModel):
     subtype: str | None = None
     confidence: float | None = None
     rule_id: str | None = None
+    rule_pattern: str | None = None  # the config pattern that fired (from rules.yaml)
+    predicted_class: str | None = None  # the model's label, kept even when low confidence sends it to "unclear"
+    # The model's own short explanation, shown to the reviewer as unverified. Kept on the case only: it is
+    # never written to the audit log or a log line and never used in a reply.
+    model_explanation: str | None = None
     reason: str = ""
     team: str | None = None
     priority: str | None = None

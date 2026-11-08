@@ -12,6 +12,9 @@ from pydantic import BaseModel
 ALLOWED_PAYLOAD_KEYS = {
     "class", "subtype", "confidence", "rule_id", "template_id", "draft_hash", "old_hash", "new_hash",
     "reason_code", "field", "lang", "error_type", "state", "team", "ticket_id", "old_class", "new_class", "provider",
+    # Which pattern of the rule fired, as its position in pack/rules.yaml (resolve it with the row's config
+    # version). An index, not the keyword: a keyword that fired also occurs in the customer's message.
+    "pattern_index",
 }
 
 
@@ -55,6 +58,17 @@ class AuditLog:
             ),
         )
         self.conn.commit()
+
+    def recent(self, limit: int = 20) -> list[AuditEvent]:
+        """The newest rows across all cases, newest first."""
+        rows = self.conn.execute(
+            "SELECT id, case_id, ts, actor, event, config_version, payload_json FROM audit ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            AuditEvent(id=r[0], case_id=r[1], ts=r[2], actor=r[3], event=r[4], config_version=r[5], payload=json.loads(r[6]))
+            for r in rows
+        ]
 
     def events(self, case_id: str | None = None) -> list[AuditEvent]:
         query = "SELECT id, case_id, ts, actor, event, config_version, payload_json FROM audit"

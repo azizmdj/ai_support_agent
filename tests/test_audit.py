@@ -25,7 +25,9 @@ def test_rule_and_take_steps_are_logged(make_env, config):
     env.gate.take(case.id, "rev-1")
     events = env.audit.events(case.id)
     assert [e.event for e in events] == ["received", "rule_matched", "routed", "taken"]
-    assert events[1].payload == {"rule_id": "fraud_keywords", "class": "fraud_report"}
+    assert events[1].payload == {"rule_id": "fraud_keywords", "class": "fraud_report", "pattern_index": 5}
+    assert config.rules[0].patterns[5] == "betrug"  # resolved from the config, so the keyword is not in the row
+    assert env.store.get(case.id).rule_pattern == "betrug"  # the case store keeps it for the reviewer
     assert {e.config_version for e in events} == {config.version}
 
 

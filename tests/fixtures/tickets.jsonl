@@ -1,6 +1,6 @@
 {"id": "T01", "received_at": "2026-11-02T08:15:00Z", "language": "en", "text": "Hi, which fees apply to my account? I want to understand the monthly costs.", "metadata": {"customer_name": "Lena Hartmann", "plan_name": "Smart"}}
 {"id": "T02", "received_at": "2026-11-02T08:20:00+01:00", "language": "de", "text": "Guten Tag, welche Gebühren fallen bei meinem Tarif an?", "metadata": {"customer_name": "Jonas Weber", "plan_name": "Start"}}
-{"id": "T03", "received_at": "2026-11-02T08:31:00Z", "language": "en", "text": "There is a card payment of 420 EUR that I did not make. I think this is fraud.", "metadata": {"customer_name": "Maya Okafor", "card_last4": "4821"}}
+{"id": "T03", "received_at": "2026-11-02T05:05:00Z", "language": "en", "text": "There is a card payment of 420 EUR that I did not make. I think this is fraud.", "metadata": {"customer_name": "Maya Okafor", "card_last4": "4821"}}
 {"id": "T04", "received_at": "2026-11-02T08:40:00Z", "language": "de", "text": "BETRUG!!! Jemand hat Geld von meinem Konto abgebucht.", "metadata": {"customer_name": "Peter Schulz"}}
 {"id": "T05", "received_at": "2026-11-02T08:52:00Z", "language": "de", "text": "Ich sehe eine betrügerische Abbuchung über 300 EUR auf meiner Karte.", "metadata": {"customer_name": "Sabine König", "card_last4": "1177"}}
 {"id": "T06", "received_at": "2026-11-02T09:05:00Z", "language": "en", "text": "I want to file a formal complaint about how my account closure was handled.", "metadata": {"customer_name": "Tom Fischer"}}
