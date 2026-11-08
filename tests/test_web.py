@@ -154,11 +154,13 @@ def test_message_reason_and_payload_text_are_escaped(console):
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html and "&lt;b&gt;tpl&lt;/b&gt;" in html
 
 
-@pytest.mark.parametrize("state,primary", [
-    ("drafted", "Approve and send"), ("needs_person", "Set class and draft"), ("escalated", "Take case"),
+@pytest.mark.parametrize("tid,state,primary", [
+    ("T01", "drafted", "Approve and send"), ("T12", "needs_person", "Set class and draft"),
+    ("T03", "escalated", "Take case"),
 ])
-def test_each_card_has_exactly_one_primary_button(console, state, primary):
-    case = next(c for c in console.store.list() if c.state.value == state)
+def test_each_card_has_exactly_one_primary_button(console, tid, state, primary):
+    case = console.case(tid)
+    assert case.state.value == state
     html = console.client.get(f"/cases/{case.id}").text
     assert html.count('class="primary"') == 1
     assert f'<button type="submit" class="primary">{primary}</button>' in html
@@ -167,6 +169,37 @@ def test_each_card_has_exactly_one_primary_button(console, state, primary):
         assert len(secondary) == 1  # no secondary actions on an escalated case
     else:
         assert "Escalate to a person" in secondary[1].split("</details>", 1)[0]
+
+
+def test_missing_field_case_offers_escalate_not_set_class(console):
+    case = console.case("T09")  # card_blocked, card_last4 missing
+    html = console.client.get(f"/cases/{case.id}").text
+    assert "A required detail is missing, so no draft can be made. Ask the customer or escalate." in html
+    assert html.count('class="primary"') == 1
+    assert '<button type="submit" class="primary">Escalate to a person</button>' in html
+    assert "Set class and draft" not in html and 'id="set_class"' not in html
+    secondary = html.split("<summary>Something wrong?</summary>", 1)[1].split("</details>", 1)[0]
+    assert "Change class" in secondary and "Escalate" not in secondary  # escalate is already the main action
+
+
+def test_class_banner_only_says_moved_when_the_lane_changed(console):
+    case = console.case("T12")  # unclear; has no plan_name
+    # A class whose template needs a missing field: the case stays and opens again with an honest banner.
+    location = console.post(f"/cases/{case.id}/class", new_class="fee_question")
+    assert location == f"/cases/{case.id}?msg=corrected_stayed"
+    assert console.store.get(case.id).state == CaseState.NEEDS_PERSON
+    html = console.client.get(location).text
+    assert "The case stays in Needs a person." in html and "moved to the lane" not in html
+    assert "A required detail is missing" in html
+    # T09 (PIN template needs card_last4): the class change still works, because the default template does not.
+    t09 = console.case("T09")
+    assert console.post(f"/cases/{t09.id}/class", new_class="card_blocked").endswith("?msg=corrected")
+    assert console.store.get(t09.id).state == CaseState.DRAFTED
+    # Drafted to another drafting class: a new draft in the same lane.
+    t01 = console.case("T01")
+    assert console.post(f"/cases/{t01.id}/class", new_class="general_question") == f"/cases/{t01.id}?msg=redrafted"
+    # A real lane change keeps the old banner and moves on.
+    assert console.post(f"/cases/{t01.id}/class", new_class="complaint").endswith("?msg=corrected")
 
 
 def test_trail_links_to_system_anchors(console):

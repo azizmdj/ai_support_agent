@@ -106,6 +106,11 @@
           <form method="post" action="/cases/{{ c.id }}/take" class="act">
             <button type="submit" class="primary">Take case</button>
           </form>
+        {% elif c.state.value == "needs_person" and blocked %}
+          <p class="note">{{ blocked }}</p>
+          <form method="post" action="/cases/{{ c.id }}/escalate" class="act">
+            <button type="submit" class="primary">Escalate to a person</button>
+          </form>
         {% elif c.state.value == "needs_person" %}
           <p class="note">No draft. Pick the right class to create one.</p>
           <form method="post" action="/cases/{{ c.id }}/class" class="inline act">
@@ -120,16 +125,18 @@
         {% if c.state.value in ("drafted", "needs_person") %}
           <details class="secondary">
             <summary>Something wrong?</summary>
-            {% if c.state.value == "drafted" %}
+            {% if c.state.value == "drafted" or blocked %}
               <form method="post" action="/cases/{{ c.id }}/class" class="inline">
                 <label for="new_class">Wrong class:</label>
                 <select id="new_class" name="new_class">{% for cls in classes %}<option value="{{ cls.name }}" {% if cls.name == c.class_name %}selected{% endif %}>{{ cls.name }}{% if cls.risk == "locked" %} (locked, escalates){% endif %}</option>{% endfor %}</select>
                 <button type="submit">Change class</button>
               </form>
             {% endif %}
-            <form method="post" action="/cases/{{ c.id }}/escalate" class="inline">
-              <button type="submit">Escalate to a person</button>
-            </form>
+            {% if not blocked %}
+              <form method="post" action="/cases/{{ c.id }}/escalate" class="inline">
+                <button type="submit">Escalate to a person</button>
+              </form>
+            {% endif %}
           </details>
         {% endif %}
       </article>

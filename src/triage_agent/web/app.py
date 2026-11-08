@@ -41,6 +41,8 @@ MESSAGES = {
     "edited_sent": "Edited reply sent via mock ticket system. The edit and the approval are both logged.",
     "escalated": "Case escalated. It is now in the Urgent lane.",
     "corrected": "Class corrected. The case moved to the lane for its new class.",
+    "redrafted": "Class changed. A new draft was made from the new class's template.",
+    "corrected_stayed": "Class changed, but no draft could be made. The case stays in Needs a person.",
     "taken": "Case taken. It left the queue.",
     "paused": "Triage paused. New tickets go to a person unless a rule escalates them.",
     "resumed": "Triage resumed.",
@@ -98,6 +100,23 @@ def short_due(due: datetime | None, now: datetime) -> str:
     minutes = abs(seconds) // 60
     span = f"{minutes // 1440}d" if minutes >= 1440 else f"{minutes // 60}h" if minutes >= 60 else f"{minutes}m"
     return f"due in {span}" if seconds >= 0 else f"{span} late"
+
+
+BLOCKED_NOTES = {
+    "missing_field": "A required detail is missing, so no draft can be made. Ask the customer or escalate.",
+    "missing_language": "There is no approved template in this language, so no draft can be made. Escalate.",
+}
+
+
+def blocked_note(events: list) -> str | None:
+    """Why the latest draft attempt was blocked, if it was. A different class cannot fix this, so the card
+    offers Escalate as the main action instead of "Set class and draft"."""
+    for e in reversed(events):
+        if e.event == "draft_blocked":
+            return BLOCKED_NOTES.get(e.payload.get("reason_code"))
+        if e.event in {"drafted", "class_corrected"}:
+            return None
+    return None
 
 
 def class_label(name: str | None) -> str:
@@ -203,6 +222,7 @@ def create_app(
             classes=[c for c in config.classes.values() if c.name != UNCLEAR],
             due=lambda c: relative_due(c.due_at, current),
             line=lambda c: queue_line(c, current),
+            blocked=blocked_note(events) if selected and selected.state == CaseState.NEEDS_PERSON else None,
         )
 
     def masked_view(text: str) -> str:
@@ -283,8 +303,17 @@ def create_app(
 
     @app.post("/cases/{case_id}/class")
     def correct_class(case_id: str, new_class: str = Form("")):
-        """A missing or placeholder class gets the error banner (not a 422); the gate rejects it before any write."""
-        return _act(case_id, lambda: gate.correct_class(case_id, reviewer, new_class), "corrected")
+        """A missing or placeholder class gets the error banner (not a 422); the gate rejects it before any write.
+        "Moved lane" is only said when the state really changed; otherwise the same case opens again."""
+        with lock:
+            before = get_case(case_id).state
+            try:
+                after = gate.correct_class(case_id, reviewer, new_class).state
+            except GateError:
+                return back(case_id, "error")
+            if after != before:
+                return go_next("corrected", skip=case_id)
+            return back(case_id, "redrafted" if after == CaseState.DRAFTED else "corrected_stayed")
 
     def _act(case_id: str, action: Callable[[], object], msg: str) -> RedirectResponse:
         with lock:
