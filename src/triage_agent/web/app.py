@@ -26,8 +26,8 @@ from ..config import UNCLEAR, load_config
 from ..gate import Gate, GateError
 from ..llm import FallbackChain, LLMProvider
 from ..masking import mask
-from ..models import Case, CaseState, Ticket, normalize_newlines
-from ..pipeline import Pipeline
+from ..models import FINAL_STATES, Case, CaseState, Ticket, normalize_newlines
+from ..pipeline import DuplicateTicket, Pipeline
 from ..providers.registry import build_llm
 from ..store import CaseNotFound, SQLiteCaseStore, connect
 from ..ticket_source import MockTicketSource, load_tickets
@@ -49,6 +49,7 @@ MESSAGES = {
     "scenario": "New scenario ticket created and triaged.",
     "message": "Test message created and triaged.",
     "invalid_message": "Nothing was created. Type 1 to 2000 characters and pick a listed language.",
+    "duplicate": "Nothing was created: a case for this ticket id already exists. Try again.",
     "stale": "This draft changed or was already handled. Nothing was sent. Check the current version below.",
     "error": "That action is not allowed for this case. Nothing was sent.",
 }
@@ -61,8 +62,7 @@ LANES = [
     ("urgent", "Urgent", CaseState.ESCALATED),
     ("ready", "Ready to approve", CaseState.DRAFTED),
     ("needs", "Needs a person", CaseState.NEEDS_PERSON),
-]
-DONE_STATES = {CaseState.SENT: "sent", CaseState.TAKEN: "taken"}  # the Done lane: closed, newest first
+]  # the Done lane holds FINAL_STATES (sent, taken), newest first
 
 
 class ScenarioVariant(BaseModel):
@@ -126,7 +126,7 @@ def class_label(name: str | None) -> str:
 
 def queue_line(case: Case, now: datetime) -> str:
     """One short line per queue item, e.g. "T03 · fraud report · 1h late"; a closed case shows its outcome."""
-    tail = DONE_STATES.get(case.state) or short_due(case.due_at, now)
+    tail = case.state.value if case.state in FINAL_STATES else short_due(case.due_at, now)
     return f"{case.ticket_id} · {class_label(case.class_name)} · {tail}"
 
 
@@ -176,7 +176,7 @@ def create_app(
             key: sorted((c for c in cases if c.state == state), key=lambda c: (c.due_at or far, c.id))
             for key, _, state in LANES
         }
-        done = sorted((c for c in cases if c.state in DONE_STATES), key=lambda c: c.received_at, reverse=True)
+        done = sorted((c for c in cases if c.state in FINAL_STATES), key=lambda c: c.received_at, reverse=True)
         return {**open_lanes, "done": done}
 
     def next_case_id(skip: str | None = None) -> str | None:
@@ -196,7 +196,8 @@ def create_app(
 
     def page(template: str, name: str, msg: str | None = None, **context) -> HTMLResponse:
         header = dict(page=name, model_label=model_label, config_version=config.version, paused=store.is_paused(),
-                      banner=MESSAGES.get(msg or ""), banner_is_error=msg in {"stale", "error", "invalid_message"})
+                      banner=MESSAGES.get(msg or ""),
+                      banner_is_error=msg in {"stale", "error", "invalid_message", "duplicate"})
         return HTMLResponse(env.get_template(template).render(**header, **context))
 
     trail_context = dict(threshold=config.settings.confidence_threshold, rule_count=len(config.rules),
@@ -221,7 +222,8 @@ def create_app(
             languages=languages,
             max_chars=MAX_MESSAGE_CHARS,
             lanes=[(key, title, all_lanes[key], True) for key, title, _ in LANES]
-            + [("done", "Done", all_lanes["done"], bool(selected and selected.state in DONE_STATES))],
+            + [("done", "Done", all_lanes["done"], bool(selected and selected.state in FINAL_STATES))],
+            is_final=bool(selected and selected.state in FINAL_STATES),
             total=sum(len(all_lanes[key]) for key, _, _ in LANES),
             selected=selected,
             ticket=ticket,
@@ -362,10 +364,15 @@ def create_app(
             gate.set_paused(reviewer, on)
             return go_next("paused" if on else "resumed")
 
-    def create_ticket(ticket_id: str, language: str, text: str, metadata: dict[str, str]) -> Case:
-        """One path for every test message: build the ticket and run it through the pipeline."""
+    def create_ticket(ticket_id: str, language: str, text: str, metadata: dict[str, str], msg: str) -> RedirectResponse:
+        """One path for every test message: build the ticket, run it through the pipeline and open its card.
+        A ticket id that already has a case (a short random id can repeat) creates nothing and says so."""
         ticket = Ticket(id=ticket_id, received_at=now(), language=language, text=text, metadata=metadata)
-        return pipeline.process(ticket)
+        try:
+            case = pipeline.process(ticket)
+        except DuplicateTicket:
+            return RedirectResponse("/new?msg=duplicate", status_code=303)
+        return back(case.id, msg)
 
     @app.post("/scenarios/{name}")
     def run_scenario(name: str):
@@ -375,8 +382,8 @@ def create_app(
         with lock:
             variant = scenario.variants[rotation[name] % len(scenario.variants)]
             rotation[name] += 1
-            case = create_ticket(f"S-{name}-{uuid.uuid4().hex[:6]}", variant.language, variant.text, variant.metadata)
-            return back(case.id, "scenario")
+            return create_ticket(f"S-{name}-{uuid.uuid4().hex[:6]}", variant.language, variant.text, variant.metadata,
+                                 "scenario")
 
     @app.post("/messages")
     def send_message(text: str = Form(""), language: str = Form("")):
@@ -386,7 +393,6 @@ def create_app(
         if not 1 <= len(text) <= MAX_MESSAGE_CHARS or language not in languages:
             return RedirectResponse("/new?msg=invalid_message", status_code=303)
         with lock:
-            case = create_ticket(f"M-{uuid.uuid4().hex[:6]}", language, text, dict(DEMO_CUSTOMER))
-            return back(case.id, "message")
+            return create_ticket(f"M-{uuid.uuid4().hex[:6]}", language, text, dict(DEMO_CUSTOMER), "message")
 
     return app

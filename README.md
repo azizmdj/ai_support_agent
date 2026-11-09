@@ -31,13 +31,15 @@ flowchart LR
   C -- locked class --> E
   C -- "low confidence or error" --> N
   C -- confident --> T["Pick and fill template · Code"]
-  N -- reviewer sets class --> T
+  N -- set class --> T
+  N -- escalate --> E
   T -- "missing field or language" --> N
   T --> D["Draft · Code"]
   D --> V["Approve, edit or escalate · Reviewer"]
   V -- escalate --> E
-  E --> K["Take case · Reviewer"]
-  V -- approve --> G["Approval gate · Code"] --> S[Reply sent]
+  V -- change class --> T
+  E --> K["Take case · Reviewer"] --> X[Taken]
+  V -- approve --> G["Approval gate · Code"] --> S[Sent]
 ```
 
 **Where to look:** three tabs, all server-rendered with no JavaScript.

@@ -127,8 +127,10 @@
             <select id="set_class" name="new_class" required><option value="" disabled selected>Choose a class...</option>{% for cls in classes %}<option value="{{ cls.name }}">{{ cls.name }}{% if cls.risk == "locked" %} (locked, escalates){% endif %}</option>{% endfor %}</select>
             <button type="submit" class="primary">Set class and draft</button>
           </form>
-        {% else %}
+        {% elif is_final %}
           <p class="note">This case is {{ c.state.value }} and has left the queue.</p>
+        {% else %}
+          <p class="note">This case is {{ c.state.value }}: triage stopped before it was routed. No action is available here.</p>
         {% endif %}
 
         {% if c.state.value in ("drafted", "needs_person") %}

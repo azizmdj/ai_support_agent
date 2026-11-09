@@ -5,6 +5,7 @@ from conftest import ticket
 
 from triage_agent.llm import FakeLLM
 from triage_agent.models import CaseState, ClassifierResult, text_hash
+from triage_agent.pipeline import DuplicateTicket
 
 
 def scripted(label, confidence=0.95, subtype=None):
@@ -193,3 +194,16 @@ def test_fixture_tickets_take_the_expected_paths(make_env, fixture_tickets):
         "T14": ("general_question", D),  # injection attempt, drafted normally
         "T15": ("pending_transfer", D),
     }
+
+
+def test_reprocessing_a_sent_case_changes_nothing(make_env):
+    env = make_env(llm=scripted("general_question"))
+    t = ticket("How do I download my invoice?")
+    case = env.run(t)
+    env.gate.approve(case.id, "rev-1", case.draft_hash)
+    before, rows, calls = env.store.get(case.id), len(env.audit.events()), env.llm.calls
+    with pytest.raises(DuplicateTicket):
+        env.run(t.model_copy(update={"text": "fraud, rebuild me"}))
+    assert env.store.get(case.id) == before and before.state == CaseState.SENT
+    assert env.store.get_ticket(t.id).text == t.text
+    assert len(env.audit.events()) == rows and env.llm.calls == calls and len(env.source.sent) == 1

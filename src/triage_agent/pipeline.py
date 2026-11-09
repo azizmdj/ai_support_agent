@@ -14,11 +14,15 @@ from .llm import LLMProvider
 from .masking import MaskingError
 from .models import Case, CaseState, ClassifierResult, Ticket, text_hash
 from .rules import match_rules
-from .store import CaseStore
+from .store import CaseNotFound, CaseStore
 from .templates import MissingField, fill
 
 ACTOR = "pipeline"
 MAX_EXPLANATION = 300  # characters of the model's own explanation kept on the case
+
+
+class DuplicateTicket(Exception):
+    """A case for this ticket id already exists. It is never rebuilt, so its state and audit stay as they are."""
 
 
 class Pipeline:
@@ -29,8 +33,15 @@ class Pipeline:
         self.audit = audit
 
     def process(self, ticket: Ticket) -> Case:
+        case_id = f"case-{ticket.id}"
+        try:
+            self.store.get(case_id)
+        except CaseNotFound:
+            pass
+        else:
+            raise DuplicateTicket(f"{case_id} already exists")
         case = Case(
-            id=f"case-{ticket.id}",
+            id=case_id,
             ticket_id=ticket.id,
             language=ticket.language,
             received_at=ticket.received_at,

@@ -1,5 +1,6 @@
 import re
 import socket
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -10,9 +11,10 @@ from fastapi.testclient import TestClient
 import triage_agent
 from triage_agent.audit import AuditLog
 from triage_agent.llm import FakeLLM
-from triage_agent.models import CaseState, ClassifierResult
+from triage_agent.models import Case, CaseState, ClassifierResult
 from triage_agent.pipeline import Pipeline
 from triage_agent.store import SQLiteCaseStore, connect
+from triage_agent.web import monitor
 from triage_agent.web.app import create_app, relative_due, short_due
 from triage_agent.web.journey import STEPS
 
@@ -773,3 +775,34 @@ def test_sidebar_footer_text_wraps(console):
     footer = css.split(".sidebar > .status {", 1)[1].split("}", 1)[0]
     assert "white-space: normal" in footer and "min-width: 0" in footer
     assert "grid-template-columns: 17rem minmax(0, 1fr)" in css
+
+
+def test_a_repeated_ticket_id_creates_nothing_and_shows_a_banner(empty_console, monkeypatch):
+    c = empty_console
+    monkeypatch.setattr("triage_agent.web.app.uuid.uuid4", lambda: uuid.UUID(int=0))  # force a repeated short id
+    assert c.post("/messages", text="Which fees apply?", language="en").endswith("?msg=message")
+    cases, rows = c.store.list(), c.audit_count()
+    assert c.post("/messages", text="Another question", language="en") == "/new?msg=duplicate"
+    assert c.store.list() == cases and c.audit_count() == rows
+    assert c.post("/scenarios/routine").endswith("?msg=scenario")  # its own prefix, so the first one is new
+    assert c.post("/scenarios/routine") == "/new?msg=duplicate"
+    assert len(c.store.list()) == 2
+    html = c.client.get("/new?msg=duplicate").text
+    assert "a case for this ticket id already exists" in html and "Not done:</strong>" in html
+
+
+def test_a_case_stuck_in_new_counts_as_open(empty_console):
+    c = empty_console
+    stuck = ticket("Which fees apply?", id="STUCK", received_at=NOW)
+    c.store.save_ticket(stuck)  # what Pipeline.process leaves behind if it stops before routing
+    c.store.save(Case(id="case-STUCK", ticket_id="STUCK", language="en", received_at=NOW, config_version="v"))
+    cases = c.store.list()
+    assert ("Not routed yet (new)", 1) in monitor.state_counts(cases)
+    assert monitor.class_counts(cases) == [{"name": "-", "open": 1, "done": 0}]
+    html = c.client.get("/monitor").text
+    assert "<strong>1</strong> Not routed yet (new)" in html and "<tr><td>-</td><td>1</td><td>0</td></tr>" in html
+    card = c.client.get("/cases/case-STUCK").text
+    assert "has left the queue" not in card and "triage stopped before it was routed" in card
+    assert 'class="primary"' not in card
+    # Without a stuck case the Monitor list is unchanged.
+    assert all(label != "Not routed yet (new)" for label, _ in monitor.state_counts([]))
