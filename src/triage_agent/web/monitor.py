@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -54,8 +55,13 @@ def parse_report(text: str) -> dict | None:
     return {**title.groupdict(), "values": values}
 
 
-def latest_eval(results_dir: Path) -> dict | None:
-    """The newest report by run date; on the same date the held-out test split wins, as the clean figure."""
+def _first_provider(chain: str) -> str:
+    return re.split(r"[+,]", chain)[0].strip()
+
+
+def latest_eval(results_dir: Path, provider_order: Sequence[str] = ()) -> dict | None:
+    """The newest report by run date; on the same date the held-out test split wins, as the clean figure.
+    On the same date and split, the provider listed first in models.yaml wins (unknown providers last)."""
     reports = []
     for path in sorted(results_dir.glob("*.md")) if results_dir.is_dir() else []:
         report = parse_report(path.read_text(encoding="utf-8"))
@@ -63,7 +69,13 @@ def latest_eval(results_dir: Path) -> dict | None:
             reports.append({**report, "file": f"eval/results/{path.name}"})
     if not reports:
         return None
-    best = max(reports, key=lambda r: (r["date"], r["split"] == "test"))
+    order = list(provider_order)
+
+    def rank(r: dict) -> int:
+        pid = _first_provider(r["provider"])
+        return -(order.index(pid) if pid in order else len(order))
+
+    best = max(reports, key=lambda r: (r["date"], r["split"] == "test", rank(r)))
     v = best["values"]
 
     def num(key: str) -> float | None:
@@ -85,5 +97,5 @@ def latest_eval(results_dir: Path) -> dict | None:
         "pii_leaks": round(leak * pii) if leak is not None and pii is not None else None,
         "pii_tickets": int(pii) if pii is not None else None,
         "classes_correct": round(accuracy * tickets) if accuracy is not None and tickets is not None else None,
-        "fake": best["provider"].split(",")[0].strip() == "fake",
+        "fake": _first_provider(best["provider"]) == "fake",
     }

@@ -97,10 +97,48 @@ def test_fenced_or_wrapped_json_is_parsed(raw):
     '{"confidence": 0.9}',
     "[1, 2, 3]",
     '{"label": "fee_question", "confidence": 0.9',
+    '{"label": "fee_question", "confidence": true}',     # a bool is not a confidence (it would become 1.0)
+    '{"label": "fee_question", "confidence": false}',
+    '{"label": "fee_question", "confidence": "0.9"}',    # a numeric string is not coerced
+    '{"label": "fee_question", "confidence": null}',
+    '{"label": "fee_question", "confidence": [0.9]}',
 ])
 def test_invalid_output_raises_provider_error(raw):
     with pytest.raises(ProviderError):
         parse_result(raw)
+
+
+def test_integer_confidence_is_a_number():
+    assert parse_result('{"label": "fee_question", "confidence": 1}').confidence == 1.0
+
+
+def test_extra_keys_are_ignored():
+    result = parse_result('{"label": "fee_question", "confidence": 0.9, "reason": "x", "notes": "y", "score": 5}')
+    assert (result.label, result.confidence, result.reason) == ("fee_question", 0.9, "x")
+    assert not hasattr(result, "notes")
+
+
+def test_label_with_wrong_case_goes_to_unclear(make_env):
+    """Labels are matched exactly: "Fee_Question" is not a class, so a person decides (fail safe)."""
+    model = RecordingModel('{"label": "Fee_Question", "confidence": 0.95}')
+    env = make_env(llm=FallbackChain([("real", LLMClassifier(model))]))
+    case = env.run(ticket("Which fees apply?"))
+    assert (case.class_name, case.state, case.predicted_class) == ("unclear", CaseState.NEEDS_PERSON, None)
+    row = next(e for e in env.audit.events(case.id) if e.event == "classified")
+    assert row.payload["reason_code"] == "unknown_label"
+
+
+SNAPSHOT = REPO_ROOT / "tests" / "snapshots" / "system_prompt.txt"
+
+
+def test_system_prompt_matches_snapshot(config, request):
+    """The full prompt for the shipped taxonomy. A change here changes model behavior: rerun eval.
+    Update on purpose with `uv run pytest --update-snapshots`."""
+    prompt = build_system_prompt(classes_of(config))
+    if request.config.getoption("--update-snapshots"):
+        SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
+        SNAPSHOT.write_text(prompt + "\n", encoding="utf-8", newline="\n")
+    assert SNAPSHOT.read_text(encoding="utf-8").replace("\r\n", "\n") == prompt + "\n"
 
 
 def test_model_cannot_set_provider_field():

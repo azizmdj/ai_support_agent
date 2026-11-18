@@ -124,6 +124,9 @@ def parse_result(raw: str) -> ClassifierResult:
         if not isinstance(data, dict):
             raise ValueError
         fields = {k: data.get(k) for k in ("label", "subtype", "confidence", "reason")}
+        # Only a JSON number is a confidence: true would otherwise become 1.0 and "0.9" would be coerced.
+        if isinstance(fields["confidence"], bool) or not isinstance(fields["confidence"], (int, float)):
+            raise ValueError
         fields["reason"] = str(fields["reason"] or "")
         if fields["subtype"] in ("", "null"):
             fields["subtype"] = None

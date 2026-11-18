@@ -172,7 +172,7 @@ def test_recorder_wraps_real_adapters(monkeypatch):
                                transport=httpx.MockTransport(handler))
     provider = harness.chain.providers[0][1]
     assert isinstance(provider, LLMClassifier) and isinstance(provider.model, ev.RecordingTextModel)
-    assert harness.models == {"openai_main": "gpt-4o-mini"}
+    assert harness.models == {"openai_main": "gpt-4o-mini-2024-07-18"}
 
 
 def test_live_run_without_key_fails_clearly():
@@ -237,6 +237,117 @@ def test_cli_eval_writes_report(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "RISKY TICKETS DRAFTED" in out and "threshold sweep" not in out
     assert len(list(tmp_path.glob("fake-test-*.md"))) == 1
+
+
+# --- Evidence: per-ticket records, rule vs model, repeats, intervals, confidence --------------------
+def test_wilson_interval():
+    assert ev.wilson(0, 0) is None
+    lo, hi = ev.wilson(0, 11)
+    assert lo == 0.0 and hi == pytest.approx(0.2588, abs=1e-4)
+    lo, hi = ev.wilson(36, 38)
+    assert (lo, hi) == (pytest.approx(0.8271, abs=1e-4), pytest.approx(0.9854, abs=1e-4))
+    lo, hi = ev.wilson(10, 10)
+    assert hi == 1.0 and lo == pytest.approx(0.7225, abs=1e-4)
+
+
+def test_rule_vs_model_split_on_risky_tickets(fake_runs):
+    """Rules do not depend on the model: 8 of 17 dev and 6 of 11 test fraud and complaint tickets fire one."""
+    dev, test = ev.risky_split(fake_runs["dev"].runs), ev.risky_split(fake_runs["test"].runs)
+    assert (dev["total"], dev["rule"], len(dev["keyword_free"])) == (17, 8, 9)
+    assert (test["total"], test["rule"], len(test["keyword_free"])) == (11, 6, 5)
+    tagged = {t.id for t in TICKETS if "no_keyword" in t.tags and t.true_class in ev.RISKY}
+    assert {k["id"] for k in dev["keyword_free"] + test["keyword_free"]} == tagged
+    assert dev["drafted"] == 2  # the fake's known gap, see the xfail above
+
+
+def test_decided_by_and_record_fields(fake_runs):
+    results = fake_runs["dev"].results
+    by = Counter(r.decided_by for r in results)
+    assert by["rule"] == sum(1 for r in results if r.rule_id) and by["model"] + by["rule"] == len(results)
+    for r in results:
+        rec = ev.record(r)
+        assert tuple(rec) == ev.RECORD_FIELDS
+        assert (rec["confidence"] is None) == (r.decided_by != "model")
+        assert (rec["model_latency_ms"] is None) == (r.decided_by == "rule")
+
+
+def test_repeat_runs_and_stability(tmp_path):
+    run = ev.evaluate(load_config(DEFAULT_PACK), "test", provider_ids="fake", env={}, repeat=3)
+    assert [rs[0].run for rs in run.runs] == [1, 2, 3] and run.results is run.runs[0]
+    stab = ev.stability(run.runs)
+    assert stab["class_changed"] == [] and stab["model_errors"] == [0, 0, 0]  # the fake is deterministic
+    assert stab["class_accuracy"][0] == stab["class_accuracy"][2] == run.metrics["class_accuracy"]
+    path = ev.write_report(run, tmp_path, today=date(2026, 11, 2))
+    text = path.read_text(encoding="utf-8")
+    for heading in ("## Stability (3 runs", "## Uncertainty (Wilson 95%)", "## Fraud and complaint tickets",
+                    "## Reported confidence", "Drafted in any run"):
+        assert heading in text
+    lines = (tmp_path / "fake-test-2026-11-02-tickets.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3 * 38
+    assert ev.stability([run.results]) is None
+
+
+def test_records_hold_no_text_pii_or_explanation(fake_runs, tmp_path):
+    ev.write_report(fake_runs["dev"], tmp_path, today=date(2026, 11, 2))
+    blob = (tmp_path / "fake-dev-2026-11-02-tickets.jsonl").read_text(encoding="utf-8")
+    rows = [json.loads(line) for line in blob.splitlines()]
+    assert len(rows) == 62 and all(set(r) == set(ev.RECORD_FIELDS) for r in rows)
+    for t in TICKETS:
+        assert t.message not in blob and not leaked(t.pii, [blob])
+        assert t.customer_name not in blob
+    assert "keyword match" not in blob  # the fake's explanation text
+
+
+def test_confidence_table_counts_model_called_tickets(fake_runs):
+    results = fake_runs["dev"].results
+    table = ev.confidence_table(results)
+    assert sum(row["tickets"] for row in table) == sum(r.decided_by == "model" for r in results)
+    assert [row["confidence"] for row in table] == sorted({row["confidence"] for row in table}, reverse=True)
+    assert all(0 <= row["correct"] <= row["tickets"] for row in table)
+
+
+def test_uncertainty_counts_distinct_tickets_not_runs():
+    rows = [result(id="a"), result(id="b", pred_class="general_question")]
+    again = [result(id="a", run=2), result(id="b", run=2)]
+    u = {row["name"]: row for row in ev.uncertainty([rows, again])}
+    assert (u["Class correct (run 1)"]["k"], u["Class correct (run 1)"]["n"]) == (1, 2)
+
+
+def test_traced_errors_and_latency_are_recorded():
+    config = load_config(DEFAULT_PACK)
+    harness = ev.build_harness(config, "fake", env={})
+    harness.chain.providers[0][1].model.inner = BrokenModel()
+    tickets = [t for t in TICKETS if t.id == "FQ04"]
+    [r] = ev.run_eval(config, tickets, harness.chain, harness.payloads, harness.current, harness.trace)
+    assert (r.decided_by, r.state, r.model_error) == ("none", "needs_person", "invalid JSON in model output")
+    assert r.model_latency_ms is not None and r.confidence is None
+
+
+class BrokenModel:
+    def complete(self, system, user):
+        return '{"label": "fee_question", "confidence": true}'
+
+
+def test_export_corrections_masks_and_marks_for_review(make_env, tmp_path):
+    from conftest import ticket
+
+    env = make_env()
+    case = env.run(ticket("Hello, my IBAN DE89 3704 0044 0532 0130 00, what is this?", id="T9"))
+    env.gate.config = env.config
+    env.gate.correct_class(case.id, "rev-1", "fee_question")
+    env.gate.correct_class(case.id, "rev-1", "general_question")  # the latest correction wins
+    out = tmp_path / "candidates.jsonl"
+    assert ev.export_corrections(env.store, env.audit, out) == (1, 0)
+    [row] = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+    assert row["true_class"] == "general_question" and row["needs_review"] is True and "split" not in row
+    assert "<IBAN_1>" in row["message"] and "DE89" not in row["message"]
+
+
+def test_cli_export_corrections_needs_a_database(tmp_path, capsys):
+    from triage_agent.__main__ import main
+
+    assert main(["export-corrections", "--out", str(tmp_path / "c.jsonl")]) == 2
+    assert "TRIAGE_DB" in capsys.readouterr().err
 
 
 def test_cli_eval_live_without_key_exits_clearly(tmp_path, capsys):

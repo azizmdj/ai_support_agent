@@ -57,6 +57,11 @@ socket.getaddrinfo = _blocked  # type: ignore[assignment]
 socket.socketpair = _loopback_socketpair  # type: ignore[assignment]
 
 
+def pytest_addoption(parser):
+    parser.addoption("--update-snapshots", action="store_true", default=False,
+                     help="rewrite tests/snapshots/ from the current code instead of comparing")
+
+
 # --- Shared fixtures -------------------------------------------------------------------------
 @pytest.fixture
 def pack(tmp_path) -> Path:
