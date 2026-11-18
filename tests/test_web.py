@@ -703,11 +703,12 @@ def eval_section(html):
 
 def test_monitor_shows_the_latest_eval_report_from_the_repo(console):
     section = eval_section(monitor_html(console))
-    assert "2026-11-08 · openai_main · test split, 38 tickets" in section  # newest date; test wins over dev
+    # Newest date; test wins over dev; openai_main wins the tie with anthropic_haiku (listed first in models.yaml).
+    assert "2026-11-18 · openai_main · test split, 38 tickets" in section
     assert "<td>0 (target 0)</td>" in section and "<td>0 of 19 tickets" in section
-    assert "<td>36 of 38</td>" in section and "<code>5c03d5c522f3</code>" in section
+    assert "<td>37 of 38</td>" in section and "<code>40b28e461762</code>" in section
     live = console.app.state.config.version
-    assert ("Eval ran on an older config." in section) == (live != "5c03d5c522f3")
+    assert ("Eval ran on an older config." in section) == (live != "40b28e461762")
 
 
 def test_monitor_notes_a_report_from_an_older_config(tmp_path):
@@ -720,6 +721,21 @@ def test_monitor_notes_a_report_from_an_older_config(tmp_path):
     assert "2026-11-02 · openai_main · test split, 38 tickets" in section  # test wins over dev on a tie
     assert "<td>37 of 38</td>" in section and "<code>cb16d991171f</code>" in section
     assert "Eval ran on an older config." in section
+
+
+def test_monitor_tie_on_date_and_split_goes_to_the_first_provider_in_models_yaml(tmp_path):
+    def report(provider):
+        return (f"# Evaluation: {provider}, split test, 2026-11-18\n\n| Setting | Value |\n| --- | --- |\n"
+                "| config_version | `abc` |\n| tickets | 38 |\n| class_accuracy | 0.500 |\n")
+
+    # File names sort anthropic_* first; models.yaml lists openai_main before the Anthropic providers.
+    for provider in ("anthropic_haiku", "openai_main", "unknown_provider"):
+        (tmp_path / f"{provider}-test-2026-11-18.md").write_text(report(provider), encoding="utf-8")
+    from triage_agent.web import monitor
+
+    order = ["fake", "openai_main", "anthropic_alt", "anthropic_haiku"]
+    assert monitor.latest_eval(tmp_path, order)["provider"] == "openai_main"
+    assert monitor.latest_eval(tmp_path, ["anthropic_haiku", "openai_main"])["provider"] == "anthropic_haiku"
 
 
 def test_monitor_without_a_report_and_with_a_matching_one(tmp_path):

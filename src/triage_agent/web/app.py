@@ -288,7 +288,7 @@ def create_app(
                 states=monitor.state_counts(cases),
                 late=monitor.overdue(cases, current),
                 by_class=monitor.class_counts(cases),
-                report=monitor.latest_eval(eval_results),
+                report=monitor.latest_eval(eval_results, list(config.models.providers)),
                 events=audit.recent(20),
                 line=lambda c: queue_line(c, current),
             )

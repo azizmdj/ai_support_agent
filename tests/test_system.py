@@ -48,7 +48,7 @@ def test_system_page_shows_key_status_but_never_a_key(monkeypatch):
     app = create_app(db_path=":memory:", seed_tickets=None)
     html = system_html(app)
     assert "OPENAI_API_KEY: set" in html
-    row = ("<td>openai_main</td><td>openai_compatible</td><td>gpt-4o-mini</td><td>api.openai.com</td>"
+    row = ("<td>openai_main</td><td>openai_compatible</td><td>gpt-4o-mini-2024-07-18</td><td>api.openai.com</td>"
            "<td>0.0</td><td>300</td><td>20 s</td>")
     assert row in html
     assert "Model: openai_main, then test model (no real AI)" in html

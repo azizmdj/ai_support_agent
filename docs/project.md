@@ -13,6 +13,7 @@ Oct 31, 2026 · @Aziz M
 | 4 | Built | Dockerfile, docker-compose, health endpoint, CI with ruff and pytest, full README. The hosted demo is dropped (see Decisions) |
 | 5 | Built | Clean-up (the `demo` command and the unused `route` rule action are gone), a read-only System page, a simpler decision card, model hyperparameters in `pack/models.yaml`. The test suite passes in CI |
 | 6 | Built | Story 0: three tabs (Setup, Review, Monitor), an AI decision box on every card, collapsible one-line queue lanes with a Done lane, an honest missing-field card, plain wording, and a seed with only one overdue case |
+| 7 | Built | Eval evidence: per-ticket records, rule vs model split, repeated runs (`--repeat`), Wilson intervals, a confidence table, a stricter output parser, a prompt snapshot test, `export-corrections`, and live runs with two models (gpt-4o-mini and claude-haiku-5-5) |
 
 ## Problem
 
@@ -29,6 +30,8 @@ Sorting and first-draft answers are repetitive work, which makes them a good fit
 ## Solution in one view
 
 Code handles what must be exact, an LLM handles language, and a human decides anything with consequences. The agent speeds up sorting and drafting and never acts alone.
+
+Technically it is a guarded AI workflow with one LLM classification call per message: no agent loop, no tools and no memory. The model returns a class, a sub-type and a confidence; code decides everything that follows.
 
 | Step | Who does it | What happens | Why |
 | --- | --- | --- | --- |
@@ -73,6 +76,8 @@ Every message passes through code rules first; the LLM only classifies, replies 
 
 Fraud and complaint messages go straight to a person: at the rules step when a keyword matches, or after classification because their class is locked. If the model is down, rules and the human queue still work.
 
+**Why there is no ReAct or tool loop.** One call per message keeps the work bounded: a fixed cost, a fixed latency and no path that runs longer than planned. Every decision is auditable, because the model's only output is a class and a confidence that code checks against the taxonomy and the threshold. The model never chooses an action: routing, template choice, field filling and sending are code and the reviewer, so a manipulated model can at most pick a wrong class, which the locked classes and the approval gate contain.
+
 ## Adapting it to Finom
 
 Finom can take the code and change behavior through configuration files and small adapters, without touching the agent logic.
@@ -83,7 +88,7 @@ Finom can take the code and change behavior through configuration files and smal
 | Edit reply templates | Approved reply templates are Markdown files with YAML front-matter, one folder per language (`templates/en`, `templates/de`). Finom imports its existing templates, and every case and audit entry names the template it used. |
 | Add their own rules | `rules.yaml` holds keyword and regex rules. The only action is `escalate`: the ticket goes straight to a person, with no draft. Rules run before the LLM and always win. When a rule fires, the LLM is not called. |
 | Connect their ticket system | A `TicketSource` interface with `fetch_new` and `send_reply`. We ship an in-memory mock; Finom writes a small adapter for the real system. |
-| Use their own models | A `TextModel` interface with one method, `complete(system, user)`, that returns text. Two adapters ship: `openai_compatible`, which also covers hosted gateways and local servers such as Ollama and vLLM through a base URL, and `anthropic`. Adapters only move text; the prompt, the parsing and the validation live once in the core (`LLMClassifier`). `pack/models.yaml` lists the providers and an ordered fallback chain, and `TRIAGE_PROVIDER` overrides the chain for one run. Each provider can set `temperature` (0 to 2, OpenAI-compatible only), `max_tokens` (1 to 4096) and `timeout_seconds` (1 to 120); unset values keep the adapter defaults (temperature 0, 300 tokens, 20 s for OpenAI-compatible; no temperature, 1024 tokens, 20 s for Anthropic). A deterministic fake provider is the default. All HTTP behavior is tested with mocked HTTP. The OpenAI adapter has also been run once against the live API; the Anthropic adapter has not been run live. |
+| Use their own models | A `TextModel` interface with one method, `complete(system, user)`, that returns text. Two adapters ship: `openai_compatible`, which also covers hosted gateways and local servers such as Ollama and vLLM through a base URL, and `anthropic`. Adapters only move text; the prompt, the parsing and the validation live once in the core (`LLMClassifier`). `pack/models.yaml` lists the providers and an ordered fallback chain, and `TRIAGE_PROVIDER` overrides the chain for one run. Each provider can set `temperature` (0 to 2, OpenAI-compatible only), `max_tokens` (1 to 4096) and `timeout_seconds` (1 to 120); unset values keep the adapter defaults (temperature 0, 300 tokens, 20 s for OpenAI-compatible; no temperature, 1024 tokens, 20 s for Anthropic). A deterministic fake provider is the default. All HTTP behavior is tested with mocked HTTP. Both adapters have also run the full evaluation against the live APIs (gpt-4o-mini and claude-haiku-5-5, 2026-11-18); the Anthropic adapter needed no change. Model ids are pinned to a dated snapshot where the provider offers one (`gpt-4o-mini-2024-07-18`); `claude-haiku-5-5` has no dated snapshot, so its id stays the alias. |
 | Use their own data stores | A `CaseStore` interface: cases (`save`, `get`, `list`), tickets (`save_ticket`, `get_ticket`) and the pause flag (`is_paused`, `set_paused`). The default is SQLite. A Postgres swap (not built). Templates are plain files; pointing the template source at a bank's existing template system (planned, later). |
 | Other markets and languages | Languages are template folders plus an AI-disclosure line per language in `settings.yaml`. Separate market folders (planned, later). |
 | Change the demo scenarios | `scenarios.yaml` in the pack holds the test messages behind the console's scenario buttons, two variants each. |
@@ -146,7 +151,7 @@ Business rules and data privacy are both controlled by configuration, with safet
 
 Detection is pattern based and deliberately over-masks. It needs no checksum, so a mistyped IBAN or card number is masked too, and some harmless numbers may be masked as well. Phone numbers must start with + or 0 and have at least 7 digits. Names and free-text addresses are not detected.
 
-Automatic detection misses things, especially names and free-text addresses, and masked text can still identify a person under DSGVO. Masking reduces risk but does not remove it. For real use, a bank would add an EU endpoint, a data processing agreement and zero-retention settings with the provider.
+Automatic detection misses things, especially names and free-text addresses, and masked text can still identify a person under DSGVO. Masking reduces risk but does not remove it. **Hosting:** for a hosted model, a bank would use an EU endpoint, a data processing agreement and zero-retention settings with the provider; alternatively it runs a local model through the OpenAI-compatible `base_url`, so messages never leave its network.
 
 ## Product design
 
@@ -232,14 +237,14 @@ One page for a team lead, with plain numbers and no charts:
 - Counts by state: urgent (escalated), ready to approve, needs a person, sent and taken, plus the number of open cases past their deadline, with a link to each. A case left in `new` (triage stopped before routing) adds a "Not routed yet (new)" count, shown only when there is one.
 - Cases by class, open and done. Open and done come from one definition in `models.py`: a state with a way out in the transition table is open, including `new`; `sent` and `taken` are done.
 - The pause state, the model and the live config version.
-- The latest evaluation report from `eval/results/` (the newest run date; on the same date the test split wins): date, model, split, fraud and complaint tickets drafted, personal-data leaks to the model, classes correct, and the config version it ran on. If that version differs from the live one, a note says "Eval ran on an older config". A run with the test model is labeled a regression check, not a result. Without a report, the page says so.
+- The latest evaluation report from `eval/results/` (the newest run date; on the same date the test split wins; on the same date and split, the provider listed first in `pack/models.yaml` wins): date, model, split, fraud and complaint tickets drafted, personal-data leaks to the model, classes correct, and the config version it ran on. If that version differs from the live one, a note says "Eval ran on an older config". A run with the test model is labeled a regression check, not a result. Without a report, the page says so.
 - The 20 most recent audit rows across all cases, newest first, with only the fields the audit log allows.
 
 **Trust features**
 
 - The AI decision box on every card: what the model saw, what it predicted, how sure it was against the threshold, or why no model was called.
 - The trail and the step table, so a first-time visitor sees who did what with which input.
-- Wrong class is one click and doubles as labeled feedback: a `class_corrected` audit row with the old and new class.
+- Wrong class is one click and doubles as labeled feedback: a `class_corrected` audit row with the old and new class. `export-corrections` turns these rows into masked candidate eval tickets for a person to review (see "Learning from reviewer corrections").
 - A pause switch in the sidebar footer, with one line on what it does. While it is on, rules still run and fraud and complaint keywords still escalate, the LLM is not called, and every other new message goes to Needs a person with the reason "paused". Cases already in the queue are not changed, and reviewers can still approve, escalate and take cases. Switching it writes a `pause_on` or `pause_off` audit row.
 - A typed test message is checked before anything is created; it never appears in an audit row or a URL.
 - State is always written as text, never shown by color alone. System fonts, light and dark mode from the system setting, no icons, no animation, no JavaScript.
@@ -279,7 +284,7 @@ All data is synthetic, committed to the repo, and used to measure the agent with
 
 **Reply templates:** 12 templates, one English and one German version for each of the 6 templates, in neutral fictional-bank wording and marked `synthetic: true`. Templates written as a fictional Finom-style help center, with facts based on public product pages, are planned (later).
 
-**Tickets:** 100 tickets in `eval/tickets.jsonl`, written by an LLM and committed: 62 in the dev split and 38 in the test split, stratified per class. Each ticket has a true class, an expected state and, where one applies, the expected template. About half carry seeded fake personal data, and 8 are injection attempts with a unique canary token. The 15 handwritten tickets in `tests/fixtures/tickets.jsonl` seed the console. The set includes hard cases:
+**Tickets:** 100 tickets in `eval/tickets.jsonl`, written by a Claude agent (Claude Code) and committed: 62 in the dev split and 38 in the test split, stratified per class. Real traffic will be messier than text one model wrote in one sitting. Because a Claude model wrote the tickets, a Claude classifier may find them easier than real messages: gpt-4o-mini is the cross-family result, claude-haiku-5-5 is same-family and likely optimistic. Each ticket has a true class, an expected state and, where one applies, the expected template. About half carry seeded fake personal data, and 8 are injection attempts with a unique canary token. The 15 handwritten tickets in `tests/fixtures/tickets.jsonl` seed the console. The set includes hard cases:
 
 - Fraud reports and complaints without any rule keyword, some with typos
 - Two issues in one message (the true class is the one with the higher priority)
@@ -292,7 +297,14 @@ All personal data is fake, such as made-up names, fictional IBANs (some mistyped
 
 **Metrics**
 
-`uv run python -m triage_agent eval [--split dev|test|all] [--provider IDS]` runs every ticket through the real pipeline on a fresh in-memory store and never approves anything. It prints a table and writes a Markdown report to `eval/results/`. The report holds the provider and model, the config version, the threshold, all metrics and a list of misses by ticket id. It contains no message text, PII values or keys.
+`uv run python -m triage_agent eval [--split dev|test|all] [--provider IDS] [--repeat N]` runs every ticket through the real pipeline on a fresh in-memory store and never approves anything. It prints a table and writes two files to `eval/results/`:
+
+- `<provider>-<split>-<date>.md`: the provider and model, the config version, the threshold, the number of runs, all metrics, the Wilson intervals, the rule vs model split, the stability block, the confidence table, latency, and a list of misses by ticket id.
+- `<provider>-<split>-<date>-tickets.jsonl`: one line per ticket and run with `run`, `ticket_id`, `true_class`, `expected_state`, `decided_by` (rule, model or none), `rule_id`, `predicted_class`, `model_label` (the model's own label, kept when low confidence sent the case to `unclear`), `subtype`, `confidence`, `state`, `template_id`, `model_latency_ms` and `model_error` (a short code such as `invalid JSON in model output`).
+
+Neither file contains message text, the model's explanation, PII values or keys; a test checks both. Token counts are not recorded, because the adapters do not expose them.
+
+With `--repeat N` the set runs N times on the same config. The main metrics are always run 1, so a repeated report compares with a single-run one; runs 2 to N call the model again for every ticket and feed only the stability block.
 
 | Metric | What it shows |
 | --- | --- |
@@ -306,6 +318,10 @@ All personal data is fake, such as made-up names, fictional IBANs (some mistyped
 | PII leak rate | Share of PII-seeded tickets where a seeded value reaches a model payload, measured at the model boundary |
 | Injection pass rate | Injection tickets with the expected class and state, nothing sent, and the canary in no draft and no audit row |
 | Threshold sweep (dev only) | Coverage and wrong draft rate at thresholds 0.5 to 0.9 |
+| Rule vs model split | Fraud and complaint tickets caught by a rule (no model call) versus keyword-free ones the model had to classify, each keyword-free ticket with its class, state and "escalated in k of N runs" |
+| Stability (with `--repeat`) | Class accuracy min, mean and max over runs; tickets whose predicted class or final state changed; risky tickets drafted in any run; model errors per run |
+| Wilson 95% interval | For class correct, state correct, risky drafted and PII leaked (see below) |
+| Confidence table | Model-called tickets of run 1, one row per distinct reported confidence, with tickets and how many had the right label |
 
 **How to read the numbers**
 
@@ -325,61 +341,90 @@ Confidence is self-reported by the model, not a calibrated probability.
 - **wrong_draft_rate** = drafts with the wrong class or sub-type / all drafts
 - **pii_leak_rate** = PII tickets where a seeded value reaches a model call / all PII tickets
 
-Small samples: with 0 failures in n tickets, the 95% upper bound on the true failure rate is about 3/n (the rule of three). So "0 drafted" is evidence, not proof:
+**Small samples.** Each rate comes with a Wilson 95% interval: the range of true rates that fit the observed k of n. n always counts distinct tickets, never runs: a ticket seen five times is still one ticket. Class and state accuracy use run 1. Risky drafted and PII leaked count a ticket once if it happened in any run, so repeats can only make them worse. The PII leak denominator is the PII tickets that reached a model (28 of 32 in dev, 14 of 19 in test); the others hit a rule first and were never sent.
 
-- All 28 fraud and complaint tickets (17 dev + 11 test): 3/28, about 11%.
-- The test split alone (11 tickets): 3/11, about 27%.
+So "0 drafted" is evidence, not proof: 0 of 11 test fraud and complaint tickets still allows a true rate up to 26%, and 0 of all 28 up to 12%. The dev split was used to tune the prompt, so the test-only figure is the clean one. The tickets are synthetic and written in one style, so the intervals describe this set, not real traffic.
 
-The dev split was used to tune the prompt, so the test-only figure is the clean one. The tickets are synthetic and written in one style, so the bound describes this set, not real traffic.
+**Non-LLM baseline.** The keyword fake (`FakeLLM`, behind the same pipeline) is the baseline without a language model: class accuracy 0.613 on dev and 0.605 on test, and it drafts two keyword-free fraud reports in dev (`eval/baseline.json`). It is a keyword list, not a trained classifier.
 
 **Results**
 
-Provider `openai_main` with model gpt-4o-mini, threshold 0.7, run on 2026-11-08 on the live config version `5c03d5c522f3`. The numbers come from `eval/results/openai_main-dev-2026-11-08.md` and `eval/results/openai_main-test-2026-11-08.md`.
+Two models on the same prompt, class descriptions, rules and threshold (0.7), run on 2026-11-18 on config version `40b28e461762`: gpt-4o-mini (`openai_main`, pinned to `gpt-4o-mini-2024-07-18`, temperature 0) with 5 runs per split, and claude-haiku-5-5 (`anthropic_haiku`, no temperature, low effort) with 3 runs per split. The numbers come from `eval/results/*-2026-11-18.md`; the per-ticket lines are in the matching `-tickets.jsonl` files. Intervals are Wilson 95%.
 
-Class accuracy and state accuracy are different measures. Class accuracy counts tickets with the right class. State accuracy counts tickets that ended in the right place: drafted, escalated or with a person.
+| Measure | gpt-4o-mini dev (62) | gpt-4o-mini test (38) | Haiku dev (62) | Haiku test (38) |
+| --- | --- | --- | --- | --- |
+| Class correct, run 1 | 57 (0.919; 0.825 to 0.965) | 37 (0.974; 0.865 to 0.995) | 60 (0.968; 0.890 to 0.991) | 34 (0.895; 0.759 to 0.958) |
+| State correct, run 1 | 59 (0.952; 0.867 to 0.983) | 38 (1.000; 0.908 to 1.000) | 59 (0.952; 0.867 to 0.983) | 34 (0.895; 0.759 to 0.958) |
+| Fraud and complaint drafted, any run | 0 of 17 (0 to 0.184) | 0 of 11 (0 to 0.259) | 0 of 17 (0 to 0.184) | 0 of 11 (0 to 0.259) |
+| Caught by a rule / left to the model | 8 / 9 | 6 / 5 | 8 / 9 | 6 / 5 |
+| Keyword-free ones escalated by the model | 9 of 9 in all 5 runs | 5 of 5 in all 5 runs | 9 of 9 in all 3 runs | 5 of 5 in all 3 runs |
+| PII leaked, of tickets that reached a model, any run | 0 of 28 (0 to 0.121) | 0 of 14 (0 to 0.215) | 0 of 28 (0 to 0.121) | 0 of 14 (0 to 0.215) |
+| Wrong draft rate, run 1 | 0.086 | 0.056 | 0.030 | 0.000 |
+| Coverage, run 1 | 0.946 | 0.783 | 0.892 | 0.609 |
+| Template accuracy, run 1 | 0.865 | 0.952 | 0.892 | 0.810 |
+| Class accuracy min / mean / max over runs | 0.919 / 0.926 / 0.935 | 0.947 / 0.968 / 0.974 | 0.968 / 0.968 / 0.968 | 0.895 / 0.895 / 0.895 |
+| Tickets whose class changed between runs | 1 (GQ09) | 1 (PT13) | 0 | 0 |
+| Model errors, all runs | 0 | 0 | 0 | 1 (FQ13 in run 2: invalid output, went to a person) |
+| Injection tickets passed, run 1 | 3 of 3 | 5 of 5 | 2 of 3 (GQ11 went to a person) | 5 of 5 |
+| Model latency median / p90, run 1 | 1369 / 1778 ms | 1175 / 1351 ms | 1048 / 1219 ms | 916 / 1052 ms |
+| Replies sent | 0 | 0 | 0 | 0 |
 
-| Metric | Dev (62) | Test (38) |
-| --- | --- | --- |
-| Class accuracy | 0.919 (57 of 62) | 0.947 (36 of 38) |
-| State accuracy | 0.952 (59 of 62) | 0.974 (37 of 38) |
-| Risky escalated rate | 1.000 | 1.000 |
-| Risky class recall | 1.000 | 1.000 |
-| Risky tickets drafted | 0 of 17 | 0 of 11 |
-| Wrong draft rate | 0.086 | 0.059 |
-| Coverage | 0.946 | 0.739 |
-| Template accuracy | 0.865 | 0.905 |
-| `unclear` recall | 0.875 | 1.000 |
-| PII leak rate | 0 (28 of 32 PII tickets reached the model) | 0 (14 of 19) |
-| Injection pass rate | 1.0 | 1.0 |
-| Replies sent | 0 | 0 |
+For comparison, the keyword fake without a language model scores class accuracy 0.613 (dev) and 0.605 (test).
 
-0 of 17 dev and 0 of 11 test fraud and complaint tickets were drafted. There are 7 misses in all, 5 in dev and 2 in test. The weak spot is fee_question vs general_question: 3 of the 7 misses (FQ04, FQ06, FQ13) are fee questions labeled `general_question`. They are also the only misses that produced a draft. A wrong-class draft like that can reach the reviewer, who approves every reply. The other 4 misses (GQ07, GQ09, UN12, PT13) ended with a person.
+**What the numbers say**
 
-**Why test coverage is 0.739.** The test split has 23 in-scope, non-risky tickets. 18 of them expect a draft and 5 expect a person: 3 have a missing field (CB03, CB10, PT05) and 2 are in a language without templates (CB05 in Turkish, CB15 in French). 17 of the 18 got a draft, so coverage is 17 of 23. The one that did not, PT13, was labeled `unclear` and went to a person; it is the only state miss in the test split.
+- **Safety held in every run.** Across 16 runs (10 with gpt-4o-mini, 6 with Haiku), no fraud or complaint ticket got a draft. Rules caught 14 of the 28 risky tickets before any model call. The other 14 have no rule keyword, and both models escalated all 14 in every run. Because n counts tickets, the honest upper bound stays 26% on the 11 test tickets and 12% on all 28, however many runs pass.
+- **The two models fail differently.** gpt-4o-mini drafts the wrong class: three fee questions labeled `general_question` (FQ04, FQ06, FQ13) got a draft that a reviewer must catch. Haiku sends more to a person instead: wrong draft rate 0.030 on dev and 0 on test, but test coverage 0.609. It also over-escalated one rude fee question as a complaint (FQ05).
+- **Same-family caution.** The tickets were written by a Claude agent, so the Haiku numbers are likely optimistic; gpt-4o-mini is the cross-family result. Haiku did not score higher on test (34 vs 37 of 38), which does not remove the concern.
+- **Run-to-run variation, measured.** At temperature 0, gpt-4o-mini changed the class of exactly one ticket per split over 5 runs: GQ09 on dev and PT13 on test, the same two tickets that differed between the 2026-11-02 and 2026-11-08 runs. Class accuracy moved within 0.919 to 0.935 on dev and 0.947 to 0.974 on test. Haiku changed no class in 3 runs.
+- **Invalid output is rare and fails closed.** In its 3 runs, Haiku returned one answer that was not valid JSON; the case went to a person with a `model_error` row. gpt-4o-mini returned none in 5 runs.
 
-**Earlier runs (2026-11-02).** Dev v1 ran on config `a74e7a29655e` with the original prompt. Dev v2 and the first test run ran on `cb16d991171f`, after one calibration change to the classifier prompt and to two class descriptions. The test split scored class accuracy 0.974 (37 of 38) and state accuracy 1.000 then. Since that run, the config changes are comment lines in `pack/models.yaml` and `pack/rules.yaml`. Those change the config version, but not the prompt, the class descriptions, the rule keywords or the threshold. The drop to 36 of 38 is one ticket (PT13) and is within run-to-run variation for a set this small. The reports stay in `eval/results/`.
+**Reported confidence**
 
-**Findings**
+The model's confidence is self-reported, not a calibrated probability. Model-called tickets of run 1, by reported value:
 
-- Self-reported confidence is uncalibrated. gpt-4o-mini almost always reports 0.9 or higher, so the dev threshold sweep is flat between 0.5 and 0.8 (coverage 0.946, wrong draft rate 0.086 at every step). The threshold is not a tuned control.
-- Safety comes from the rules, the locked classes and the approval gate, not from the threshold.
-- The calibration change shifted errors toward human review and did not raise accuracy. One vague ticket moved from a wrong draft to a person, and one general question moved to a person.
-- A second signal, such as agreement between two providers or token log-probabilities, is a possible next step (planned, later).
+| Confidence | gpt-4o-mini dev | gpt-4o-mini test | Haiku dev | Haiku test |
+| --- | --- | --- | --- | --- |
+| 0.95 | 8 (8 right) | 5 (5) | 6 (6) | 5 (5) |
+| 0.93 | | | 13 (13) | 8 (8) |
+| 0.92 | | | 2 (2) | |
+| 0.90 | 35 (33) | 22 (21) | 16 (16) | 11 (11) |
+| 0.85 | | | 3 (3) | 1 (1) |
+| 0.80 | 2 (1) | 1 (1) | | 1 (0) |
+| 0.75 | | | 3 (3) | 1 (1) |
+| 0.70 | | | 1 (1) | |
+| 0.60 | | | 3 (2) | 4 (2) |
+| 0.50 | 7 (5) | 3 (3) | 3 (2) | |
+| 0.40 | | | 1 (1) | |
+| 0.30 | | | 3 (3) | 1 (1) |
+| 0.10 | 2 (2) | 1 (1) | | |
+
+- gpt-4o-mini uses five values. 43 of its 54 dev model-called tickets are at 0.9 or higher, and two of its dev errors sit at 0.90. No ticket reports a value between 0.5 and 0.8, so its dev threshold sweep is flat from 0.5 to 0.8 (coverage 0.946, wrong draft rate 0.086) and the threshold is not a tuned control for it.
+- Haiku spreads its answers from 0.30 to 0.95, and its dev sweep is not flat: at 0.8 the wrong draft rate drops from 0.030 to 0 while coverage drops from 0.892 to 0.811. The threshold stays 0.7: this is one model on 62 dev tickets, and the threshold was not tuned.
+
+**Injection tickets.** There are 8. Two (FR15, CO13) contain a fraud or complaint keyword, so a rule escalates them before any model call; 6 reach the model. The canary cannot appear in a draft by construction, because replies are approved templates filled with ticket metadata and the model writes no text that is sent. The measured part is whether the class and state stay right: gpt-4o-mini kept all 6, Haiku kept 5 and sent GQ11 to a person, a failure in the safe direction. Six tickets are too few for a rate.
+
+**Why test coverage is at most 0.783.** The test split has 23 in-scope, non-risky tickets. 18 expect a draft and 5 expect a person: 3 have a missing field (CB03, CB10, PT05) and 2 are in a language without templates (CB05 in Turkish, CB15 in French). gpt-4o-mini drafted all 18 in run 1 (0.783). Haiku drafted 14 (0.609): it labeled PT13 and FQ13 `unclear`, escalated FQ05, and picked the PIN sub-type for CB13, whose template needs a card number the ticket does not have.
+
+**Earlier runs.** `eval/results/` keeps the gpt-4o-mini reports of 2026-11-02 (configs `a74e7a29655e` with the original prompt, then `cb16d991171f` after one calibration change to the prompt and two class descriptions) and 2026-11-08 (`5c03d5c522f3`). The prompt and descriptions have not changed since `cb16d991171f`; later config versions come from comments, a model pin and a new provider entry. The 2026-11-08 test run scored 36 of 38 against 37 of 38 earlier; the repeated runs above show that the difference is PT13, which changes class between runs on the same config.
 
 **Process**
 
-The dev split was used for tuning. The test split was first run after dev was settled. It was run again on 2026-11-08 to measure the live config version, with no prompt or class-description change in between, and nothing was tuned on it. The fake provider is a regression guard only: its numbers are not results. It has a known gap: it drafts two keyword-free fraud reports in dev. A strict expected-failure test records the target of 0, so it fails loudly once the gap is closed.
+The dev split was used for tuning. The test split was first run after dev was settled and has been rerun only to measure new config versions, never to tune. The fake provider is a regression guard only: its numbers are not results. It has a known gap: it drafts two keyword-free fraud reports in dev. A strict expected-failure test records the target of 0, so it fails loudly once the gap is closed.
 
-**What the numbers do not show**
+**Known limits**
 
-- The tickets are synthetic and written by an LLM. Real messages will be messier.
+- The tickets are synthetic and written by a Claude agent. Real messages will be messier.
 - The sets are small. One ticket moves a metric by about 1.6 points on dev and 2.6 points on test.
 - Only structured PII (IBAN, card, email, phone) is measured. Names and addresses are not.
 - The model's explanation is stored on the case only, never in the audit log, and is shown as unverified. It may repeat a customer's name, because names are not masked.
 - The calibration prompt names tax or legal advice as an example, which is also an eval category.
-- A fraud message without a rule keyword that the model labels as a routine class would still get a draft. The safeguard is the person who approves every reply, plus the eval result (0 of 11 test, 0 of 17 dev).
-- The result belongs to one model and one prompt.
-- The Anthropic adapter has not been run live.
+- A fraud message without a rule keyword that the model labels as a routine class would still get a draft. The safeguard is the person who approves every reply, plus the result above (0 drafted in 16 runs).
+- **A wrong class can bypass the missing-field guard.** FQ06 is a fee question without a plan name, so its template cannot be filled and it should go to a person. gpt-4o-mini labeled it `general_question`, whose template needs only the customer's name, so it got a draft. The reviewer is the control.
+- Two models, one prompt. No few-shot or class-description ablation has been run.
+- Token counts and cost per ticket are not recorded.
+
+**Learning from reviewer corrections.** No model is trained. A reviewer's "Wrong class" writes a `class_corrected` row. `uv run python -m triage_agent export-corrections --db <case store>` joins those rows with the stored ticket text, masks it, and writes `eval/candidates.jsonl`: one line per corrected case with `true_class` set to the reviewer's class, `needs_review: true` and no split. A person reads each line (names and addresses are not masked), adds the split and the expected state, and only then moves it into `eval/tickets.jsonl`. Prompt or description changes are then judged on dev as before.
 
 Finom can add its own labeled tickets, rerun `eval`, and see accuracy before trusting the agent with anything.
 
@@ -433,7 +478,7 @@ pack/                        taxonomy, rules, settings, templates, scenarios, mo
 tests/                       unit, adapter, masking and console tests, fixture tickets
 README.md
 pyproject.toml
-eval/                        tickets.jsonl (100 tickets), baseline.json (fake-provider baseline), results/ (reports)
+eval/                        tickets.jsonl (100 tickets), baseline.json (fake-provider baseline), results/ (reports and per-ticket records), candidates.jsonl (exported corrections, when written)
 Dockerfile                   container image for the console
 docker-compose.yml           one service, localhost port, named volume for the database
 .github/workflows/ci.yml     ruff and pytest on every push and pull request
@@ -499,7 +544,7 @@ The steps map directly to graph nodes if Finom uses an orchestrator.
 
 The whole system runs on a laptop with no API keys. The shipped routing is the fake provider only.
 
-- `uv sync` installs it, `uv run pytest` runs the tests, `uv run python -m triage_agent serve` starts the console, `uv run python -m triage_agent classify "<text>"` prints the masked text and the classifier result from the active chain, for a one-off live check, and `uv run python -m triage_agent eval --split dev` runs the evaluation set offline with the fake provider.
+- `uv sync` installs it, `uv run pytest` runs the tests, `uv run python -m triage_agent serve` starts the console, `uv run python -m triage_agent classify "<text>"` prints the masked text and the classifier result from the active chain, for a one-off live check, `uv run python -m triage_agent eval --split dev` runs the evaluation set offline with the fake provider (add `--provider openai_main --repeat 5` for a live, repeated run), and `uv run python -m triage_agent export-corrections --db <file>` writes reviewer corrections to `eval/candidates.jsonl` for human review.
 - A **fake LLM provider** classifies by keywords or returns scripted answers, so tests are fast and repeatable.
 - Adapter tests use httpx's mock transport, so no test makes a real HTTP call.
 - The console loads the fixture tickets and templates into SQLite, in memory by default.
@@ -519,14 +564,16 @@ These run in CI on every push to `main` and on every pull request, and locally w
 | Prompt-injection set | Hostile messages change neither the class nor the actions taken | Built: unit tests plus 8 injection tickets in the eval set |
 | Evaluation regression | The fake-provider run stays at or above `eval/baseline.json`; leak rate 0, no reply sent and injection pass rate 1.0 are enforced | Built |
 | Model adapters | Request URL, headers and body, response parsing, and HTTP errors, timeouts and malformed bodies, for both adapters over mocked HTTP | Built |
+| Model output and prompt guard | The parser accepts only a JSON number as confidence (a bool, a numeric string, null or a list is rejected and goes to a person), ignores extra keys and tolerates code fences; a label in the wrong case ("Fee_Question") goes to `unclear`; a snapshot test fixes the full system prompt for the shipped taxonomy (`tests/snapshots/`, updated on purpose with `uv run pytest --update-snapshots`) | Built |
+| Eval evidence | Wilson interval values, rule vs model split counts, decided-by and per-ticket record fields, repeated runs and the stability block, the confidence table, n counted per ticket and not per run, error and latency tracing, per-ticket files without text or PII, and `export-corrections` masking and marking for review | Built |
 | Secret scan | No API-key-shaped string (`sk-…`) in `src/`, `pack/`, `tests/`, `docs/`, `.github/`, the `Dockerfile`, `docker-compose.yml` or the README, and `.env` files are git-ignored | Built |
 | Pause switch | While paused, fraud still escalates, everything else goes to a person, and the model is not called | Built |
 | Setup page | Shows the flow, settings, classes with descriptions, rule keywords, templates, allowed fields and the exact prompt from the loaded pack, and follows a changed pack after a restart; shows whether a key variable is set but never its value; GET changes nothing; config text is escaped | Built |
-| Monitor page | Counts by state and class, overdue cases, the latest eval report with an older-config note or a no-report note, the 20 newest audit rows without message text; GET changes nothing | Built |
+| Monitor page | Counts by state and class, overdue cases, the latest eval report (on a tie of date and split, the provider listed first in `pack/models.yaml`) with an older-config note or a no-report note, the 20 newest audit rows without message text; GET changes nothing | Built |
 | Packaging | `/health` returns ok and the provider ids without state change or secrets; compose passes the key variables by name only; the Dockerfile copies only existing paths | Built |
 | Reviewer console | Scenarios land in the right lane; approve, edit, stale draft, escalate and wrong class behave and log correctly; exactly one primary button per card; a missing-field card offers Escalate; the class-change banner matches what happened; queue items are one line and sent or taken cases appear under Done; the seed starts with one overdue case; the AI decision box shows the masked text, predicted class, confidence against the threshold and the rule keyword; the card order is message, AI decision, collapsed "How this was decided", draft, primary button; trail steps link to System; the header holds no controls and the pause switch sits in the sidebar; the Needs-a-person class select starts on a placeholder that the server rejects with no state change and no audit row; typed messages land in the right lane, a bad input creates no case and no audit row, the typed text never reaches an audit row or a URL, and the composer appears only on New message; GET never changes state; customer text is escaped | Built |
 
-Shorter unit tests cover config validation, template filling (a missing field or language blocks the draft), audit-log fields and config version, the model-down path, invalid model output, deadlines, the journey trail and the no-network guard. Storage tests on Postgres are (not built). CI also runs the ruff linter. A run with the real model on demand is the `classify` command.
+Shorter unit tests cover config validation, template filling (a missing field or language blocks the draft), audit-log fields and config version, the model-down path, invalid model output, deadlines, the journey trail and the no-network guard. Storage tests on Postgres are (not built). CI also runs the ruff linter. CI makes no live model call: real-model behavior is measured by `eval` runs on demand, whose reports and per-ticket records are committed, and by the `classify` command for a one-off check.
 
 **Cautions**
 
@@ -535,7 +582,11 @@ Shorter unit tests cover config validation, template filling (a missing field or
 
 ## Decisions
 
-- **Confidence** is self-reported by the model, with a threshold of 0.7. It is not calibrated: the model almost always reports 0.9 or higher, so the dev sweep is flat between 0.5 and 0.8 and the threshold is not a tuned control.
+- **One LLM call, no tool loop.** The model classifies once per message and never chooses an action; see "Why there is no ReAct or tool loop" under Architecture.
+- **Confidence** is self-reported by the model, with a threshold of 0.7. It is not calibrated. gpt-4o-mini reports only five values (43 of 54 dev model-called tickets at 0.9 or higher), so its dev sweep is flat between 0.5 and 0.8; Haiku spreads its values more and its sweep moves above 0.7 (see the confidence table). The threshold has not been tuned.
+- **Model ids are pinned where possible.** `gpt-4o-mini-2024-07-18` is a dated snapshot; `claude-haiku-5-5` has none, so the alias is used. A model change is a config change and changes the config version.
+- **Repeated runs report run 1.** With `--repeat N` the main metrics stay those of run 1, so reports stay comparable; the other runs only feed the stability block, and intervals count tickets, never runs.
+- **The parser is strict about confidence.** Only a JSON number counts; `true` would otherwise become 1.0 and a string would be coerced silently. Anything else is a model error and the case goes to a person.
 - **Deadlines** are ISO 8601 durations (days, hours, minutes) in calendar time, UTC, counted from `received_at`.
 - **A two-issue ticket gets one label.** If the model is unsure between topics, low confidence sends it to a person.
 - **`config_version`** is the first 12 characters of a sha256 over all pack files, with line endings normalized.
@@ -544,7 +595,7 @@ Shorter unit tests cover config validation, template filling (a missing field or
 - **Free-text composer:** a typed test message is trimmed and must be 1 to 2,000 characters in a language the pack has (en, de); otherwise nothing is created and a banner says why. Code adds the fake name "Demo Customer" so a template can greet the customer; other fields stay missing, so a card or transfer question goes to a person. A hint says to use synthetic data only, because names are not masked.
 - **Masking over-masks and needs no checksum.** A mistyped IBAN is masked too; a harmless number may be masked as well.
 - **Adapters only send text.** The prompt, the parsing and the validation live once in the core, so a new provider is a small HTTP adapter.
-- **The Anthropic adapter sends no `temperature`,** because API version `2026-10-21` rejects sampling parameters. It is tested with mocked HTTP only.
+- **The Anthropic adapter sends no `temperature`,** because API version `2026-10-21` rejects sampling parameters. It is tested with mocked HTTP and ran the full evaluation live on 2026-11-18 without a change.
 - **Coverage counts missing-field and other-language tickets,** so it cannot reach 1.0. State accuracy shows whether tickets ended where expected.
 - **The baseline comes from the fake provider.** Tests compare against it and never write it; `eval --write-baseline` updates it on purpose.
 - **Setup and Monitor are read-only.** They show the loaded config, the case counts and the latest evaluation, and change nothing. There is no editing UI: config belongs in git with review before merge, and a restart plus a new config version makes every change traceable.
@@ -564,7 +615,7 @@ The demo is a starting point. Before any real use, a bank would need to cover at
 - [ ] AI Act risk classification confirmed by the compliance team
 - [ ] DORA mapping: ICT third-party register entry for each model provider, resilience testing and incident reporting
 - [ ] Complaint deadlines and escalation rules confirmed per market
-- [ ] Evaluation on the bank's own labeled tickets, with agreed accuracy thresholds per class
+- [ ] Evaluation on the bank's own labeled tickets, with agreed accuracy thresholds per class, including human-written tickets so the result does not rest on text written by one model family
 - [ ] Load testing at real message volume
 - [ ] Pilot on real tickets with a small reviewer group before wider use
 - [ ] Model governance: approved models, version pinning, and a change process
