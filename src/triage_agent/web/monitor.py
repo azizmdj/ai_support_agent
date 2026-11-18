@@ -8,9 +8,8 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from ..models import Case, CaseState
+from ..models import OPEN_STATES, Case, CaseState
 
-OPEN_STATES = (CaseState.ESCALATED, CaseState.DRAFTED, CaseState.NEEDS_PERSON)
 STATE_LABELS = [
     (CaseState.ESCALATED, "Urgent (escalated)"),
     (CaseState.DRAFTED, "Ready to approve"),
@@ -24,8 +23,12 @@ _ROW = re.compile(r"^\|\s*(?P<key>[^|]+?)\s*\|\s*(?P<value>[^|]*?)\s*\|\s*$", re
 
 
 def state_counts(cases: list[Case]) -> list[tuple[str, int]]:
+    """One row per label. A case in a state without a label (`new`: it stopped before routing) gets an extra
+    row, shown only when there is one, so the counts always add up to every case."""
     counts = Counter(c.state for c in cases)
-    return [(label, counts.get(state, 0)) for state, label in STATE_LABELS]
+    rows = [(label, counts.get(state, 0)) for state, label in STATE_LABELS]
+    unrouted = sum(n for state, n in counts.items() if state not in dict(STATE_LABELS))
+    return rows + ([("Not routed yet (new)", unrouted)] if unrouted else [])
 
 
 def overdue(cases: list[Case], now: datetime) -> list[Case]:

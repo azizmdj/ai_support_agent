@@ -1,13 +1,23 @@
 import ast
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 from conftest import ticket
 
 import triage_agent
-from triage_agent.gate import GateError
+from triage_agent.gate import Gate, GateError
 from triage_agent.llm import FakeLLM
-from triage_agent.models import CaseState, ClassifierResult, text_hash
+from triage_agent.models import (
+    ALLOWED_TRANSITIONS,
+    FINAL_STATES,
+    OPEN_STATES,
+    Case,
+    CaseState,
+    ClassifierResult,
+    InvalidTransition,
+    text_hash,
+)
 
 SRC = Path(triage_agent.__file__).parent
 
@@ -128,6 +138,89 @@ def test_take_rejects_drafted_case(make_env):
     env, case = drafted_env(make_env)
     with pytest.raises(GateError):
         env.gate.take(case.id, "rev-1")
+
+
+# --- The transition table ----------------------------------------------------------------------
+HIGH = ClassifierResult(label="general_question", confidence=0.95)  # drafts with only customer_name
+LOW = ClassifierResult(label="fee_question", confidence=0.1)
+NAME_ONLY = {"customer_name": "Test Kunde"}  # card_blocked's default template drafts; fee_question lacks plan_name
+FRAUD = None  # the ticket text fires the fraud rule; the model is not called
+
+
+def _redraft(gate, case):
+    return gate.correct_class(case.id, "rev-1", "card_blocked")
+
+
+def _blocked(gate, case):
+    return gate.correct_class(case.id, "rev-1", "fee_question")
+
+
+S = CaseState
+# Every allowed pair and the real code path that makes it: (model answer, reviewer action or None for the pipeline).
+PATHS = {
+    (S.NEW, S.DRAFTED): (HIGH, None),
+    (S.NEW, S.NEEDS_PERSON): (LOW, None),
+    (S.NEW, S.ESCALATED): (FRAUD, None),
+    (S.ESCALATED, S.TAKEN): (FRAUD, lambda g, c: g.take(c.id, "rev-1")),
+    (S.DRAFTED, S.SENT): (HIGH, lambda g, c: g.approve(c.id, "rev-1", c.draft_hash)),
+    (S.DRAFTED, S.ESCALATED): (HIGH, lambda g, c: g.escalate(c.id, "rev-1")),
+    (S.DRAFTED, S.DRAFTED): (HIGH, _redraft),
+    (S.DRAFTED, S.NEEDS_PERSON): (HIGH, _blocked),
+    (S.NEEDS_PERSON, S.DRAFTED): (LOW, _redraft),
+    (S.NEEDS_PERSON, S.ESCALATED): (LOW, lambda g, c: g.escalate(c.id, "rev-1")),
+    (S.NEEDS_PERSON, S.NEEDS_PERSON): (LOW, _blocked),
+}
+
+
+def gate_env(make_env, result):
+    env = make_env(llm=FakeLLM(script=[result or HIGH]))
+    return env, Gate(env.store, env.audit, env.source, env.config)
+
+
+def test_every_allowed_pair_is_made_by_its_code_path(make_env):
+    assert set(PATHS) == {(src, dst) for src, targets in ALLOWED_TRANSITIONS.items() for dst in targets}
+    for (src, dst), (result, action) in PATHS.items():
+        env, gate = gate_env(make_env, result)
+        case = env.run(ticket("This is fraud" if result is FRAUD else "invoice?", metadata=NAME_ONLY))
+        if action is not None:
+            assert case.state == src, (src, dst)
+            case = action(gate, case)
+        assert case.state == dst and env.store.get(case.id).state == dst, (src, dst)
+        assert env.audit.events(case.id)[-1].event in {"routed", "sent", "taken", "escalated"}, (src, dst)
+
+
+def test_every_pair_outside_the_table_is_rejected():
+    received = datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc)
+    for src in CaseState:
+        for dst in CaseState:
+            case = Case(id="c", ticket_id="t", language="en", received_at=received, config_version="v", state=src)
+            if dst in ALLOWED_TRANSITIONS.get(src, set()):
+                case.transition(dst)
+                assert case.state == dst
+            else:
+                with pytest.raises(InvalidTransition):
+                    case.transition(dst)
+                assert case.state == src
+    assert FINAL_STATES == {S.SENT, S.TAKEN} and S.NEW in OPEN_STATES
+
+
+@pytest.mark.parametrize("closed", [S.SENT, S.TAKEN])
+def test_closed_cases_reject_edit_escalate_and_class_change(make_env, closed):
+    env, gate = gate_env(make_env, HIGH)
+    case = env.run(ticket("invoice?" if closed == S.SENT else "This is fraud", metadata=NAME_ONLY))
+    case = gate.approve(case.id, "rev-1", case.draft_hash) if closed == S.SENT else gate.take(case.id, "rev-1")
+    before, rows, sent = env.store.get(case.id), len(env.audit.events()), list(env.source.sent)
+    actions = [
+        lambda: gate.edit(case.id, "rev-2", "Hello, a later edit."),
+        lambda: gate.escalate(case.id, "rev-2"),
+        lambda: gate.correct_class(case.id, "rev-2", "card_blocked"),
+        lambda: gate.correct_class(case.id, "rev-2", "fraud_report"),
+    ]
+    for action in actions:
+        with pytest.raises(GateError):
+            action()
+    assert env.store.get(case.id) == before and before.state == closed
+    assert len(env.audit.events()) == rows and env.source.sent == sent
 
 
 # --- Static checks -----------------------------------------------------------------------------

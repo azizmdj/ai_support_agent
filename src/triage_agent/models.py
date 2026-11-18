@@ -57,6 +57,9 @@ ALLOWED_TRANSITIONS: dict[CaseState, set[CaseState]] = {
     CaseState.DRAFTED: {CaseState.SENT, CaseState.ESCALATED, CaseState.DRAFTED, CaseState.NEEDS_PERSON},
     CaseState.NEEDS_PERSON: {CaseState.ESCALATED, CaseState.DRAFTED, CaseState.NEEDS_PERSON},
 }
+# Derived from the table: a state with a way out is open (including `new`), a state without one is final.
+OPEN_STATES: frozenset[CaseState] = frozenset(ALLOWED_TRANSITIONS)
+FINAL_STATES: frozenset[CaseState] = frozenset(CaseState) - OPEN_STATES
 
 
 class InvalidTransition(Exception):

@@ -229,8 +229,8 @@ Below the steps, the same section shows the case facts (state, class, priority, 
 
 One page for a team lead, with plain numbers and no charts:
 
-- Counts by state: urgent (escalated), ready to approve, needs a person, sent and taken, plus the number of open cases past their deadline, with a link to each.
-- Cases by class, open and done.
+- Counts by state: urgent (escalated), ready to approve, needs a person, sent and taken, plus the number of open cases past their deadline, with a link to each. A case left in `new` (triage stopped before routing) adds a "Not routed yet (new)" count, shown only when there is one.
+- Cases by class, open and done. Open and done come from one definition in `models.py`: a state with a way out in the transition table is open, including `new`; `sent` and `taken` are done.
 - The pause state, the model and the live config version.
 - The latest evaluation report from `eval/results/` (the newest run date; on the same date the test split wins): date, model, split, fraud and complaint tickets drafted, personal-data leaks to the model, classes correct, and the config version it ran on. If that version differs from the live one, a note says "Eval ran on an older config". A run with the test model is labeled a regression check, not a result. Without a report, the page says so.
 - The 20 most recent audit rows across all cases, newest first, with only the fields the audit log allows.
@@ -377,6 +377,7 @@ The dev split was used for tuning. The test split was first run after dev was se
 - Only structured PII (IBAN, card, email, phone) is measured. Names and addresses are not.
 - The model's explanation is stored on the case only, never in the audit log, and is shown as unverified. It may repeat a customer's name, because names are not masked.
 - The calibration prompt names tax or legal advice as an example, which is also an eval category.
+- A fraud message without a rule keyword that the model labels as a routine class would still get a draft. The safeguard is the person who approves every reply, plus the eval result (0 of 11 test, 0 of 17 dev).
 - The result belongs to one model and one prompt.
 - The Anthropic adapter has not been run live.
 
@@ -462,7 +463,7 @@ Keep Finom-specific wording in the pack files and not in the core, so a second p
 
 **Pipeline**
 
-The pipeline is plain Python: rules, classify, pick template, fill template. It gets no ticket source, so it cannot send anything. Case state lives in the database. While the pause switch is on, rules still escalate; the LLM is not called and every other ticket goes to a person. The classify step masks the message, tries the providers in the chain in order, and records the provider id that answered.
+The pipeline is plain Python: rules, classify, pick template, fill template. It gets no ticket source, so it cannot send anything. Case state lives in the database. A ticket id that already has a case is refused with `DuplicateTicket`: the case, its ticket and its audit rows stay as they are. The console then shows "Nothing was created" instead of an error page. While the pause switch is on, rules still escalate; the LLM is not called and every other ticket goes to a person. The classify step masks the message, tries the providers in the chain in order, and records the provider id that answered.
 
 Approval is a separate gate, not a pipeline step. The gate holds every reviewer action, and it is the only code that calls `send_reply`.
 
@@ -483,6 +484,8 @@ Case states (as in `models.py`):
 | `drafted` | `sent` (only through approve), `escalated`, `needs_person`, `drafted` (redraft) |
 | `needs_person` | `drafted`, `escalated`, `needs_person` |
 | `escalated` | `taken` |
+
+`sent` and `taken` are final. A test drives every pair in the table through its real code path and checks that every other pair is rejected.
 
 The steps map directly to graph nodes if Finom uses an orchestrator.
 
@@ -565,6 +568,8 @@ The demo is a starting point. Before any real use, a bank would need to cover at
 - [ ] Load testing at real message volume
 - [ ] Pilot on real tickets with a small reviewer group before wider use
 - [ ] Model governance: approved models, version pinning, and a change process
+- [ ] Save the sent state before calling the ticket system, or make the send idempotent; today a failed save after sending lets a retry send twice.
+- [ ] Cases stuck in `new` (after a crash in the pipeline) are visible only in Monitor; add a retry job or an alert before production.
 
 ## Sources
 
