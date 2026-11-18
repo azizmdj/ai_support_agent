@@ -78,16 +78,16 @@ Fraud and complaint messages go straight to a person: at the rules step when a k
 
 **Why there is no ReAct or tool loop.** One call per message keeps the work bounded: a fixed cost, a fixed latency and no path that runs longer than planned. Every decision is auditable, because the model's only output is a class and a confidence that code checks against the taxonomy and the threshold. The model never chooses an action: routing, template choice, field filling and sending are code and the reviewer, so a manipulated model can at most pick a wrong class, which the locked classes and the approval gate contain.
 
-## Adapting it to Finom
+## Adapting it to a bank
 
-Finom can take the code and change behavior through configuration files and small adapters, without touching the agent logic.
+A bank can take the code and change behavior through configuration files and small adapters, without touching the agent logic.
 
-| What Finom wants to change | How it works |
+| What a bank wants to change | How it works |
 | --- | --- |
 | Add or edit message classes | Classes live in one `taxonomy.yaml`: name, description, priority, target team, deadline, risk flag and reply mode (template or no draft). A new class is a new block in that file. |
-| Edit reply templates | Approved reply templates are Markdown files with YAML front-matter, one folder per language (`templates/en`, `templates/de`). Finom imports its existing templates, and every case and audit entry names the template it used. |
+| Edit reply templates | Approved reply templates are Markdown files with YAML front-matter, one folder per language (`templates/en`, `templates/de`). The bank imports its existing templates, and every case and audit entry names the template it used. |
 | Add their own rules | `rules.yaml` holds keyword and regex rules. The only action is `escalate`: the ticket goes straight to a person, with no draft. Rules run before the LLM and always win. When a rule fires, the LLM is not called. |
-| Connect their ticket system | A `TicketSource` interface with `fetch_new` and `send_reply`. We ship an in-memory mock; Finom writes a small adapter for the real system. |
+| Connect their ticket system | A `TicketSource` interface with `fetch_new` and `send_reply`. We ship an in-memory mock; the bank writes a small adapter for the real system. |
 | Use their own models | A `TextModel` interface with one method, `complete(system, user)`, that returns text. Two adapters ship: `openai_compatible`, which also covers hosted gateways and local servers such as Ollama and vLLM through a base URL, and `anthropic`. Adapters only move text; the prompt, the parsing and the validation live once in the core (`LLMClassifier`). `pack/models.yaml` lists the providers and an ordered fallback chain, and `TRIAGE_PROVIDER` overrides the chain for one run. Each provider can set `temperature` (0 to 2, OpenAI-compatible only), `max_tokens` (1 to 4096) and `timeout_seconds` (1 to 120); unset values keep the adapter defaults (temperature 0, 300 tokens, 20 s for OpenAI-compatible; no temperature, 1024 tokens, 20 s for Anthropic). A deterministic fake provider is the default. All HTTP behavior is tested with mocked HTTP. Both adapters have also run the full evaluation against the live APIs (gpt-4o-mini and claude-haiku-5-5, 2026-11-18); the Anthropic adapter needed no change. Model ids are pinned to a dated snapshot where the provider offers one (`gpt-4o-mini-2024-07-18`); `claude-haiku-5-5` has no dated snapshot, so its id stays the alias. |
 | Use their own data stores | A `CaseStore` interface: cases (`save`, `get`, `list`), tickets (`save_ticket`, `get_ticket`) and the pause flag (`is_paused`, `set_paused`). The default is SQLite. A Postgres swap (not built). Templates are plain files; pointing the template source at a bank's existing template system (planned, later). |
 | Other markets and languages | Languages are template folders plus an AI-disclosure line per language in `settings.yaml`. Separate market folders (planned, later). |
@@ -262,11 +262,11 @@ A visitor opens Setup to read "How it works", switches to Review, opens New mess
 - Charts and dashboards. Monitor shows plain counts.
 - Free text in the audit log. The model's explanation is kept on the case only, and a rule keyword is logged as its position in `pack/rules.yaml`, not as text, because a keyword that fired also occurs in the customer's message.
 - A customer-facing chat window, which is a different product with different risks. The New message text box is a test input for the demo, not a customer-facing chat.
-- An automatic instant acknowledgment for fraud reports. It would send something without approval, so it is an open question for Finom.
+- An automatic instant acknowledgment for fraud reports. It would send something without approval, so it is an open question for the bank.
 
 ## Compliance map
 
-The design addresses DSGVO, the EU AI Act and DORA through concrete features, and it does not claim formal compliance. That needs Finom's own legal and risk review.
+The design addresses DSGVO, the EU AI Act and DORA through concrete features, and it does not claim formal compliance. That needs the bank's own legal and risk review.
 
 | Regulation | Concern | How the design responds |
 | --- | --- | --- |
@@ -274,15 +274,15 @@ The design addresses DSGVO, the EU AI Act and DORA through concrete features, an
 | EU AI Act | Transparency and human oversight | Every draft carries an AI-disclosure line appended by code; the gate enforces human approval of every outbound reply; the use case avoids high-risk categories (no credit decisions, no employee scoring or monitoring); every decision is logged |
 | DORA | ICT third-party risk and resilience | The model sits behind a swappable interface; an ordered fallback chain of providers (built); a tested "model unavailable" path (rules still run, and provider errors go to a person with a `model_error` audit event); audit log built; a `/health` endpoint and a container health check (built); an incident log (not built) |
 
-**Regulator note.** [Finom is licensed as an electronic money institution by De Nederlandsche Bank](https://finom.co/llms.txt), so DNB and Dutch rules are likely the main supervisory frame, with national rules such as BaFin's relevant for the German market. This should be confirmed with Finom's compliance team before the document describes any regulator in detail.
+**Regulator note.** The supervisory regulator and the rules that apply depend on the bank's license and markets. Confirm them with the bank's compliance team before the design is described against any regulator in detail.
 
-**Risk classification assumption.** Message triage with human approval is assumed not to be a high-risk AI system under the EU AI Act. Finom's compliance team would need to confirm this for their specific use.
+**Risk classification assumption.** Message triage with human approval is assumed not to be a high-risk AI system under the EU AI Act. The bank's compliance team would need to confirm this for its specific use.
 
 ## Synthetic data and evaluation
 
 All data is synthetic, committed to the repo, and used to measure the agent with numbers. This is what separates a demo from a prototype.
 
-**Reply templates:** 12 templates, one English and one German version for each of the 6 templates, in neutral fictional-bank wording and marked `synthetic: true`. Templates written as a fictional Finom-style help center, with facts based on public product pages, are planned (later).
+**Reply templates:** 12 templates, one English and one German version for each of the 6 templates, in neutral fictional-bank wording and marked `synthetic: true`. Templates written for a specific bank's help center, with facts from its public product pages, are planned (later).
 
 **Tickets:** 100 tickets in `eval/tickets.jsonl`, written by a Claude agent (Claude Code) and committed: 62 in the dev split and 38 in the test split, stratified per class. Real traffic will be messier than text one model wrote in one sitting. Because a Claude model wrote the tickets, a Claude classifier may find them easier than real messages: gpt-4o-mini is the cross-family result, claude-haiku-5-5 is same-family and likely optimistic. Each ticket has a true class, an expected state and, where one applies, the expected template. About half carry seeded fake personal data, and 8 are injection attempts with a unique canary token. The 15 handwritten tickets in `tests/fixtures/tickets.jsonl` seed the console. The set includes hard cases:
 
@@ -426,11 +426,11 @@ The dev split was used for tuning. The test split was first run after dev was se
 
 **Learning from reviewer corrections.** No model is trained. A reviewer's "Wrong class" writes a `class_corrected` row. `uv run python -m triage_agent export-corrections --db <case store>` joins those rows with the stored ticket text, masks it, and writes `eval/candidates.jsonl`: one line per corrected case with `true_class` set to the reviewer's class, `needs_review: true` and no split. A person reads each line (names and addresses are not masked), adds the split and the expected state, and only then moves it into `eval/tickets.jsonl`. Prompt or description changes are then judged on dev as before.
 
-Finom can add its own labeled tickets, rerun `eval`, and see accuracy before trusting the agent with anything.
+A bank can add its own labeled tickets, rerun `eval`, and see accuracy before trusting the agent with anything.
 
 ## Deployment and operations
 
-The core is a plain Python package with SQLite. It runs on a laptop with no network, in a container, and Finom can import it into its own services.
+The core is a plain Python package with SQLite. It runs on a laptop with no network, in a container, and a bank can import it into its own services.
 
 - **Packaging:** an installable Python package (`pyproject.toml`, managed with `uv`).
 - **Docker:** a `Dockerfile` on `python:3.13-slim` installs the locked dependencies with `uv sync --frozen --no-dev` in their own layer, then copies the code, the pack, the eval set and the console fixture tickets. It runs as a non-root user, exposes port 8000 and starts `serve --host 0.0.0.0`. A `HEALTHCHECK` calls `/health` with Python's `urllib`. `.dockerignore` keeps `.git`, `.venv`, caches, `.env` files and databases out of the image. The committed eval reports in `eval/results/` are part of the image, so the Monitor tab in the container shows the latest one. A new report needs a rebuild (`docker compose up --build`).
@@ -444,9 +444,9 @@ The core is a plain Python package with SQLite. It runs on a laptop with no netw
 - **Observability:** the audit log of every classification, template choice, draft, edit, approval and send. Structured logs (not built). No external tracing service is required.
 - **Failure handling:** if a provider times out, returns an HTTP error or gives invalid output, the next provider in the chain is tried. If all fail, rules still run and the case goes to a person with a `model_error` audit event. If masking fails, no provider is called and a `mask_failed` row is written.
 
-**Running on Finom's own infrastructure**
+**Running on the bank's own infrastructure**
 
-- Finom imports the package and sets a base URL for its own model, local or hosted, in `pack/models.yaml`.
+- The bank imports the package and sets a base URL for its own model, local or hosted, in `pack/models.yaml`.
 - Storage is local SQLite, in a file set by `TRIAGE_DB` or on the compose volume. A Postgres store and an on-premise deployment profile: (not built).
 - Tests run with the network blocked: any socket use fails, so a test that tries to reach the internet fails.
 
@@ -493,11 +493,11 @@ The console uses plain HTML forms rendered on the server: no JavaScript, no CDN 
 3. **Models and evaluation,** in two parts.
    - 3a: model adapters, PII masking, the fallback chain and the `classify` command. (built, phase 3a)
    - 3b: 100 synthetic tickets with seeded fake PII, the evaluation suite with PII leak rate and injection resistance, and a live run with gpt-4o-mini. (built, phase 3b)
-4. **Packaging and README:** Dockerfile, docker-compose, health endpoint, CI, and a README with the flowchart, how Finom adapts it, results and limits. (built, phase 4) The hosted demo is dropped.
+4. **Packaging and README:** Dockerfile, docker-compose, health endpoint, CI, and a README with the flowchart, how a bank adapts it, results and limits. (built, phase 4) The hosted demo is dropped.
 5. **Polish:** clean-up, the read-only System page, a simpler decision card, and model hyperparameters in `pack/models.yaml`. (built, phase 5)
 6. **Story 0:** the Setup, Review and Monitor tabs, the AI decision box, one-line collapsible lanes with a Done lane, the missing-field card, plain wording and the seed change. (built, phase 6)
 
-Keep Finom-specific wording in the pack files and not in the core, so a second pack is a copy. One exception today: the fake LLM's keyword list lives in the core.
+Keep bank-specific wording in the pack files and not in the core, so a second pack is a copy. One exception today: the fake LLM's keyword list lives in the core.
 
 **Storage and integrations**
 
@@ -532,13 +532,13 @@ Case states (as in `models.py`):
 
 `sent` and `taken` are final. A test drives every pair in the table through its real code path and checks that every other pair is rejected.
 
-The steps map directly to graph nodes if Finom uses an orchestrator.
+The steps map directly to graph nodes if the bank uses an orchestrator.
 
 **Deployment**
 
 - **Local container:** `docker compose up --build` runs the console on `127.0.0.1:8000`, described under Deployment and operations.
 - **Hosted demo (not built):** a public server with TLS, an access code and a spend limit. Dropped; see Decisions.
-- **Finom's own infrastructure:** import the package and set the model base URL, described under Deployment and operations.
+- **The bank's own infrastructure:** import the package and set the model base URL, described under Deployment and operations.
 
 **Local testing**
 
@@ -577,8 +577,8 @@ Shorter unit tests cover config validation, template filling (a missing field or
 
 **Cautions**
 
-- Do not copy Finom's real UI, logo or help-center text. Use a neutral design with their name and colors, label it as an unofficial demo with synthetic data, and write your own templates.
-- Publish the core and the generic pack publicly. Share the Finom pack with them directly.
+- Do not copy any bank's real UI, logo or help-center text. Use a neutral design, label it as an unofficial demo with synthetic data, and write your own templates.
+- Publish the core and the generic pack publicly. Share a pack made for a specific bank only with that bank.
 
 ## Decisions
 
@@ -621,9 +621,3 @@ The demo is a starting point. Before any real use, a bank would need to cover at
 - [ ] Model governance: approved models, version pinning, and a change process
 - [ ] Save the sent state before calling the ticket system, or make the send idempotent; today a failed save after sending lets a retry send twice.
 - [ ] Cases stuck in `new` (after a crash in the pipeline) are visible only in Monitor; add a retry job or an alert before production.
-
-## Sources
-
-- [Finom LLM-readable overview (licensing, products, integrations)](https://finom.co/llms.txt)
-- [Finom AI launch coverage, The Paypers (beta capabilities and planned approval-based actions)](https://thepaypers.com/fintech/news/finom-launches-ai-assistant-built-into-sme-accounts)
-- [Finom MCP announcement](https://finom.co/en-de/news/finom-mcp-ask-questions-inside-claude-chatgpt/)
