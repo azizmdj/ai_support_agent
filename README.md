@@ -66,12 +66,22 @@ The config is validated on every start; restart and check that the config versio
 
 ## Results
 
-gpt-4o-mini on the 38 held-out test tickets (run 2026-11-08, config `5c03d5c522f3`): 0 of 11 fraud and complaint tickets drafted, 0 PII leaks, 36 of 38 classes correct (class accuracy 0.947), 37 of 38 tickets ended in the right place (state accuracy 0.974), and 100% of injection attempts handled. 100 synthetic tickets written by an LLM; see [docs/project.md](docs/project.md) for limits.
+Two models on the same prompt, rules and threshold, run 2026-11-18 on config `40b28e461762`: gpt-4o-mini (pinned `gpt-4o-mini-2024-07-18`, 5 runs) and claude-haiku-5-5 (3 runs). On the 38 held-out test tickets:
 
-- The weak spot is fee_question vs general_question: 3 of the 7 misses across dev and test. A wrong-class draft like that can reach the reviewer, who approves every reply.
-- The model's confidence is almost always 0.9 or higher, so the threshold sweep is flat between 0.5 and 0.8 and the threshold is not a tuned control. Safety comes from rules, locked classes and the approval gate.
-- The tickets are synthetic; real messages will be messier.
-- The sets are small: with 0 failures in 11 tickets, the true rate could still be up to about 3/11.
+| | gpt-4o-mini | claude-haiku-5-5 |
+| --- | --- | --- |
+| Fraud and complaint tickets drafted, any run | 0 of 11 | 0 of 11 |
+| Classes correct, run 1 (Wilson 95%) | 37 of 38 (0.865 to 0.995) | 34 of 38 (0.759 to 0.958) |
+| Right end state, run 1 | 38 of 38 | 34 of 38 |
+| Tickets whose class changed between runs | 1 (PT13) | 0 |
+| PII leaks, of tickets that reached a model | 0 of 14 | 0 of 14 |
+
+- Rules catch 6 of the 11 risky test tickets (14 of 28 across dev and test) before any model call; both models escalated the other, keyword-free ones in every run. With 0 of 11 drafted, the true rate could still be up to 26%.
+- The models fail differently: gpt-4o-mini drafts some fee questions as general questions (a wrong draft the reviewer must catch), Haiku sends more tickets to a person instead. The keyword baseline without a model scores 0.605.
+- Of the 8 injection tickets, rules catch 2 and 6 reach the model. The canary cannot appear in a draft, because replies are approved templates.
+- The tickets were written by a Claude agent: gpt-4o-mini is the cross-family result, Haiku is same-family and likely optimistic. They are synthetic; real messages will be messier.
+- Confidence is self-reported. gpt-4o-mini uses five values, mostly 0.9 or higher, so the threshold is not a tuned control; safety comes from rules, locked classes and the approval gate.
+- A wrong class can bypass a missing-field check (another class's template may need fewer fields); the reviewer is the control.
 - Only structured personal data (IBAN, card, email, phone) is masked and measured; names and addresses are not.
 - The model's explanation is stored on the case only (never in the audit log), shown as unverified, and may repeat names, because names are not masked.
 
